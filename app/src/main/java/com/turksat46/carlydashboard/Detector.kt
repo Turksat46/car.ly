@@ -133,6 +133,7 @@ class Detector(
         val imageBuffer = processedImage.buffer
 
         val output = TensorBuffer.createFixedSize(intArrayOf(1, numChannel, numElements), OUTPUT_IMAGE_TYPE)
+
         interpreter.run(imageBuffer, output.buffer)
 
         val bestBoxes = bestBox(output.floatArray)

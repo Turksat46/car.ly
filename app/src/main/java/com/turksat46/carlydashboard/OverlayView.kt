@@ -1,16 +1,10 @@
 package com.turksat46.carlydashboard
 
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.RectF
+import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
 import androidx.core.content.ContextCompat
-import java.util.LinkedList
-import kotlin.math.max
 
 class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs) {
 
@@ -21,12 +15,16 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
 
     private var bounds = Rect()
 
+    // Neues: Bitmap für Spur-Overlay
+    private var laneBitmap: Bitmap? = null
+
     init {
         initPaints()
     }
 
     fun clear() {
         results = listOf()
+        laneBitmap = null // Auch Spur löschen
         textPaint.reset()
         textBackgroundPaint.reset()
         boxPaint.reset()
@@ -51,6 +49,13 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
     override fun draw(canvas: Canvas) {
         super.draw(canvas)
 
+        // Spur-Overlay zuerst zeichnen (hinter BoundingBoxes)
+        laneBitmap?.let {
+            val scaled = Bitmap.createScaledBitmap(it, width, height, false)
+            canvas.drawBitmap(scaled, 0f, 0f, null)
+        }
+
+        // BoundingBoxes + Klassenname zeichnen
         results.forEach {
             val left = it.x1 * width
             val top = it.y1 * height
@@ -71,12 +76,16 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
                 textBackgroundPaint
             )
             canvas.drawText(drawableText, left, top + bounds.height(), textPaint)
-
         }
     }
 
     fun setResults(boundingBoxes: List<BoundingBox>) {
         results = boundingBoxes
+        invalidate()
+    }
+
+    fun setLaneBitmap(bitmap: Bitmap?) {
+        laneBitmap = bitmap
         invalidate()
     }
 

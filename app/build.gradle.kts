@@ -67,6 +67,7 @@ dependencies {
     implementation ("com.google.accompanist:accompanist-permissions:0.34.0")
     implementation ("com.google.android.gms:play-services-location:21.2.0")// Oder neueste Version
 
+    implementation ("org.opencv:opencv:4.9.0")
 
     implementation ("androidx.compose.ui:ui:1.6.4")
     implementation ("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
