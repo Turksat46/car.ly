@@ -25,6 +25,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -321,7 +322,6 @@ fun LoadingIndicator(text: String) {
     }
 }
 
-// Haupt-UI Composable (angepasst)
 @Composable
 fun CameraDetectionScreen(
     boundingBoxes: List<BoundingBox>,
@@ -378,73 +378,79 @@ fun CameraDetectionScreen(
             update = { view -> view.setResults(boundingBoxes) }
         )
 
-        // --- UI Elemente ---
-
-        // Inferenzzeit (bleibt oben rechts)
-        Text(
-            text = if (inferenceTime > 0) "${inferenceTime}ms" else "",
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp),
-            color = Color.White,
-            fontSize = 14.sp
-        )
-
-        // Geschwindigkeits-Card (Position ändert sich)
-        val speedAlignment = when (physicalOrientation) {
-            Configuration.ORIENTATION_LANDSCAPE -> Alignment.TopStart
-            else -> Alignment.TopStart
+        // Inferenzzeit
+        if (inferenceTime > 0) {
+            Text(
+                text = "$inferenceTime ms",
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .background(Color.Black.copy(alpha = 0.5f), shape = MaterialTheme.shapes.medium)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                color = Color.White,
+                fontSize = 12.sp
+            )
         }
+
+        // Geschwindigkeit
+        val speedAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
+            Alignment.TopStart else Alignment.TopCenter
+
         Card(
             modifier = Modifier
                 .align(speedAlignment)
-                .padding(start = 16.dp, top = 16.dp, end = 16.dp), // Padding für die Card selbst
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp), // Kleiner Schatten
-            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.5f)) // Halbtransparenter Hintergrund
+                .padding(16.dp),
+            shape = MaterialTheme.shapes.large,
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0x99000000))
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), // Innenabstand in der Card
-                horizontalAlignment = Alignment.CenterHorizontally // Text zentriert
+                modifier = Modifier.padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Aktuelle Geschwindigkeit
                 val speedKmh = (speed * 3.6f).roundToInt()
                 Text(
                     text = "$speedKmh km/h",
                     color = Color.White,
-                    fontSize = 24.sp,
+                    fontSize = 36.sp,
                     fontWeight = FontWeight.Bold
                 )
-
-                Spacer(modifier = Modifier.height(4.dp)) // Kleiner Abstand
-
-                // Platzhalter für erkannte Geschwindigkeit
-                // TODO: Diesen Text später mit dem erkannten Wert aktualisieren
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Limit: --", // Platzhalter
-                    color = Color.White.copy(alpha = 0.8f), // Etwas weniger prominent
+                    text = "Limit: --",
+                    color = Color.White.copy(alpha = 0.7f),
                     fontSize = 16.sp
                 )
             }
         }
 
+        // GPU Toggle
+        val gpuAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
+            Alignment.BottomStart else Alignment.BottomCenter
 
-        // GPU Toggle (Position ändert sich)
-        val gpuToggleAlignment = when (physicalOrientation) {
-            Configuration.ORIENTATION_LANDSCAPE -> Alignment.CenterEnd
-            else -> Alignment.BottomCenter
-        }
-        Row(
+        Card(
             modifier = Modifier
-                .align(gpuToggleAlignment)
+                .align(gpuAlignment)
                 .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            shape = MaterialTheme.shapes.large,
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0x99000000))
         ) {
-            Text("GPU", color = Color.White)
-            Spacer(modifier = Modifier.width(8.dp))
-            Switch(
-                checked = isGpuEnabled,
-                onCheckedChange = onGpuToggle
-            )
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("GPU", color = Color.White, fontSize = 14.sp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Switch(
+                    checked = isGpuEnabled,
+                    onCheckedChange = onGpuToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.Green,
+                        uncheckedThumbColor = Color.LightGray
+                    )
+                )
+            }
         }
     }
 }
