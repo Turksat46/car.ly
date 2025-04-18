@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.turksat46.carlydashboard"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.turksat46.carlydashboard"
@@ -50,11 +50,24 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
 
-    implementation ("org.tensorflow:tensorflow-lite:2.13.0")
-    implementation ("org.tensorflow:tensorflow-lite-support:0.4.3")
-    implementation ("androidx.camera:camera-camera2:1.3.1")
-    implementation ("androidx.camera:camera-lifecycle:1.3.1")
-    implementation ("androidx.camera:camera-view:1.3.1")
+    val cameraxVersion = "1.4.0-alpha04"
+    implementation("androidx.camera:camera-camera2:${cameraxVersion}")
+    implementation("androidx.camera:camera-lifecycle:${cameraxVersion}")
+    implementation("androidx.camera:camera-view:${cameraxVersion}")
+
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+
+    implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-api:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+
+    implementation ("com.google.accompanist:accompanist-permissions:0.34.0")
+    implementation ("com.google.android.gms:play-services-location:21.2.0")// Oder neueste Version
+
+
     implementation ("androidx.compose.ui:ui:1.6.4")
     implementation ("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     
