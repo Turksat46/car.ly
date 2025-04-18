@@ -1,5 +1,6 @@
 package com.turksat46.carlydashboard
 
+import android.annotation.SuppressLint
 import android.graphics.*
 import android.media.Image
 import android.util.Log
@@ -76,54 +77,94 @@ private fun YUV_420_888toNV21(image: android.media.Image): ByteArray {
 }
 
 
-// Hauptfunktion zum Konvertieren von ImageProxy zu Bitmap
-@OptIn(ExperimentalGetImage::class)
+// --- Beispiel: imageProxyToBitmap mit Rotationskorrektur ---
+// !!! Stelle sicher, dass diese Funktion korrekt ist und zum ImageFormat passt !!!
+@SuppressLint("UnsafeOptInUsageError") // Nötig für imageProxy.image
 fun imageProxyToBitmap(imageProxy: ImageProxy): Bitmap? {
-    var bitmap: Bitmap? = null
-    try {
-        val image = imageProxy.image ?: return null
+    // Prüfe, ob das Bild gültig ist (manchmal kann es null sein)
+    val image = imageProxy.image ?: run {
+        Log.w("imageProxyToBitmap", "ImageProxy has no image")
+        imageProxy.close() // Schließen, wenn kein Bild da ist
+        return null
+    }
 
-        // Stelle sicher, dass das Format YUV_420_888 ist
-        if (image.format != ImageFormat.YUV_420_888) {
-            Log.e("imageProxyToBitmap", "Unsupported image format: ${image.format}")
-            // Fallback oder Fehlerbehandlung
-            // try { return imageProxy.toBitmap() } catch (e: Exception) { return null }
-            return null
+    // Nur YUV_420_888 unterstützen
+    if (image.format != ImageFormat.YUV_420_888) {
+        Log.e("imageProxyToBitmap", "Unsupported image format: ${image.format}")
+        imageProxy.close() // Schließen bei falschem Format
+        return null
+    }
+
+    try {
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        // Copy Y
+        yBuffer.get(nv21, 0, ySize)
+
+        // Copy VU (Interleaved)
+        val vPixelStride = image.planes[2].pixelStride // Normalerweise 2 für NV21
+        val uPixelStride = image.planes[1].pixelStride // Normalerweise 2 für NV21
+        val vRowStride = image.planes[2].rowStride
+        val uRowStride = image.planes[1].rowStride
+
+        val uvWidth = image.width / 2
+        val uvHeight = image.height / 2
+        var nv21Offset = ySize
+
+        // Kopiere V und U interleaved ins NV21 Array
+        for (row in 0 until uvHeight) {
+            val vRowStart = row * vRowStride
+            val uRowStart = row * uRowStride
+            for (col in 0 until uvWidth) {
+                val vIndex = vRowStart + col * vPixelStride
+                val uIndex = uRowStart + col * uPixelStride
+
+                // Stelle sicher, dass wir nicht über die Buffergrenzen lesen (Defensiv)
+                if (vIndex < vSize && uIndex < uSize && nv21Offset + 1 < nv21.size) {
+                    nv21[nv21Offset++] = vBuffer[vIndex]
+                    nv21[nv21Offset++] = uBuffer[uIndex]
+                } else {
+                    Log.w("imageProxyToBitmap", "Buffer overflow detected during VU copy at row $row, col $col")
+                    // Breche hier ab oder handle den Fehler - NV21 ist jetzt unvollständig
+                    break // Breche innere Schleife ab
+                }
+            }
+            if(nv21Offset >= nv21.size) break // Breche äußere Schleife ab, falls schon voll
         }
 
-        val nv21 = YUV_420_888toNV21(image)
+
+        // Erstelle YuvImage
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
         val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, yuvImage.width, yuvImage.height), 100, out)
+        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 95, out) // Qualität 95 ist gut
         val imageBytes = out.toByteArray()
-        val decodedBitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size) ?: return null // Wichtig: Check auf null
+        var bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
 
-        // Rotation berücksichtigen
+        // --- ROTATION ANWENDEN ---
         val rotationDegrees = imageProxy.imageInfo.rotationDegrees
-        if (rotationDegrees == 0) {
-            bitmap = decodedBitmap
-        } else {
+        if (rotationDegrees != 0 && bitmap != null) {
             val matrix = Matrix()
             matrix.postRotate(rotationDegrees.toFloat())
-            bitmap = Bitmap.createBitmap(
-                decodedBitmap, 0, 0, decodedBitmap.width, decodedBitmap.height, matrix, true
-            )
-            // Gib das Original-Bitmap frei, wenn ein neues erstellt wurde
-            if (bitmap != decodedBitmap) {
-                // decodedBitmap.recycle() // Vorsicht mit recycle(), kann zu Problemen führen, wenn es noch referenziert wird.
-                // Sicherer ist es oft, das nicht explizit zu tun und dem GC zu überlassen.
+            val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            if (rotatedBitmap != bitmap) { // Nur recyceln, wenn neues Bitmap erstellt wurde
+                bitmap.recycle()
             }
+            bitmap = rotatedBitmap
         }
+        return bitmap // Gibt das (ggf. rotierte) Bitmap zurück
+
     } catch (e: Exception) {
-        Log.e("imageProxyToBitmap", "Error converting ImageProxy to Bitmap", e)
-        bitmap = null // Stelle sicher, dass bei Fehlern null zurückgegeben wird
+        Log.e("imageProxyToBitmap", "Error converting YUV to Bitmap", e)
+        return null // Gib null zurück bei Fehlern
     } finally {
-        // WICHTIG: Schließe ImageProxy IMMER, egal ob erfolgreich oder nicht!
-        try {
-            imageProxy.close()
-        } catch (e: Exception) {
-            Log.e("imageProxyToBitmap", "Error closing ImageProxy", e)
-        }
+        imageProxy.close() // *** WICHTIG: ImageProxy IMMER schließen ***
     }
-    return bitmap
 }

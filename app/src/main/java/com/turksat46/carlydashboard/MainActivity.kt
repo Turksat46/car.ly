@@ -5,27 +5,21 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.Bitmap
-import android.graphics.ImageFormat
-import android.graphics.Matrix
-import android.graphics.Rect
-import android.graphics.YuvImage
-import android.graphics.BitmapFactory
+import android.graphics.* // Import für Matrix etc. in imageProxyToBitmap
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Looper
 import android.util.Log
+import android.util.Size // Für TargetResolution
 import android.view.OrientationEventListener
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
+import androidx.camera.core.ImageProxy // Import für ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -44,12 +38,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -58,19 +51,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.android.gms.location.*
 import com.turksat46.carlydashboard.ui.theme.CarlyDashboardTheme // Dein Theme
-import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.delay
+import org.opencv.android.OpenCVLoader
+import java.io.ByteArrayOutputStream // Import für imageProxyToBitmap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
-import androidx.compose.ui.graphics.Brush // <-- NEU: Import für Gradient
-import kotlinx.coroutines.delay // <-- NEU: Import für delay in LaunchedEffect
-
-import org.opencv.android.OpenCVLoader // Import hinzufügen
 
 enum class WarningLevel {
     None, Soft, Hard
@@ -84,79 +75,66 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
     private lateinit var locationCallback: LocationCallback
     private var orientationEventListener: OrientationEventListener? = null
 
-    lateinit var laneSoftPlayer:MediaPlayer
-    lateinit var laneHardPlayer:MediaPlayer
+    private lateinit var laneSoftPlayer: MediaPlayer
+    private lateinit var laneHardPlayer: MediaPlayer
 
-    // State für die UI-Updates
+    // --- UI States ---
     private val boundingBoxesState = mutableStateOf<List<BoundingBox>>(emptyList())
-    private val laneBitmapState = mutableStateOf<Bitmap?>(null) // <-- NEU: State für das Spur-Bitmap
-    private val laneDeviationState = mutableStateOf<Double?>(null) // <-- NEU: State für Abweichung
+    private val laneBitmapState = mutableStateOf<Bitmap?>(null)
+    private val laneDeviationState = mutableStateOf<Double?>(null)
     private val inferenceTimeState = mutableStateOf(0L)
     private val isGpuEnabledState = mutableStateOf(true)
     private val isLaneDetectionEnabledState = mutableStateOf(true)
     private val isDetectorInitialized = mutableStateOf(false)
-    private val speedState = mutableStateOf(0.0f) // Geschwindigkeit in m/s
+    private val speedState = mutableStateOf(0.0f)
     private val physicalOrientationState = mutableStateOf(Configuration.ORIENTATION_PORTRAIT)
     private val warningLevelState = mutableStateOf(WarningLevel.None)
+    private val isDebugModeState = mutableStateOf(false)
+
+    // --- Neu: Speichert die Dimensionen des letzten analysierten Bildes ---
+    // Wird benötigt, um dem OverlayView die korrekte Basisgröße mitzuteilen
+    private var lastAnalyzedBitmapWidth = mutableStateOf(1)
+    private var lastAnalyzedBitmapHeight = mutableStateOf(1)
 
 
-    @OptIn(ExperimentalPermissionsApi::class) // Benötigt für rememberMultiplePermissionsState
+    @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        // Initialisierungen
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         cameraExecutor = Executors.newSingleThreadExecutor()
         initializeDetector()
         createLocationCallback()
         createOrientationListener()
+        initializeMediaPlayers()
 
-
-        laneSoftPlayer = MediaPlayer.create(this, R.raw.lanesoftwarning)
-        laneHardPlayer = MediaPlayer.create(this, R.raw.lanehardwarning)
-        laneSoftPlayer.setVolume(1f, 1f)
-        laneHardPlayer.setVolume(1f, 1f)
-        laneSoftPlayer.start() // no need to call prepare(); create() does that for you
-        laneHardPlayer.start()
-
-
-
-
-        if (OpenCVLoader.initDebug()) {
-            Log.i("OpenCV", "OpenCV loaded successfully")
-            // Hier kannst du fortfahren, da OpenCV geladen ist.
-            // Deine restlichen Initialisierungen können hier folgen.
+        // OpenCV laden
+        if (!OpenCVLoader.initDebug()) {
+            Log.e("OpenCV", "Internal OpenCV library not found. Using OpenCV Manager for initialization")
+            // Hier könntest du versuchen, den OpenCV Manager zu nutzen oder eine Fehlermeldung anzeigen.
+            // Für diese Demo gehen wir davon aus, dass die statische Initialisierung funktioniert.
+            showError("OpenCV konnte nicht geladen werden!")
         } else {
-            Log.e("OpenCV", "OpenCV load failed!")
-            // Hier solltest du den Fehler behandeln.
-            // Vielleicht eine Meldung anzeigen oder OpenCV-Funktionen deaktivieren.
-            // Fürs Erste reicht das Logging. Die App wird wahrscheinlich abstürzen,
-            // wenn sie versucht, OpenCV ohne geladene Bibliothek zu verwenden.
+            Log.i("OpenCV", "OpenCV loaded successfully!")
         }
 
         setContent {
             CarlyDashboardTheme {
-                // State für Berechtigungen
                 val permissionsState = rememberMultiplePermissionsState(
                     permissions = listOf(
                         Manifest.permission.CAMERA,
                         Manifest.permission.ACCESS_FINE_LOCATION
                     )
                 )
-
-                // Berechtigungen anfordern
                 LaunchedEffect(Unit) {
                     if (!permissionsState.allPermissionsGranted) {
                         permissionsState.launchMultiplePermissionRequest()
                     }
                 }
 
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    // UI basierend auf Berechtigungen und Initialisierungsstatus anzeigen
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     when {
                         permissionsState.allPermissionsGranted && isDetectorInitialized.value -> {
                             CameraDetectionScreen(
@@ -166,53 +144,40 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                                 isLaneDetectionEnabled = isLaneDetectionEnabledState.value,
                                 speed = speedState.value,
                                 physicalOrientation = physicalOrientationState.value,
-                                onGpuToggle = { enabled -> toggleGpu(enabled) },
-                                onLaneDetectionToggle = { enabled -> toggleLaneDetection(enabled) },
-                                onBitmapAnalyzed = { bitmap -> analyzeBitmap(bitmap) },
+                                isDebuggingEnabled = isDebugModeState.value,
+                                onGpuToggle = ::toggleGpu, // Vereinfachte Übergabe
+                                onLaneDetectionToggle = ::toggleLaneDetection,
+                                onDebugViewToggle = ::toggleDebugView,
+                                onBitmapAnalyzed = ::analyzeBitmap, // Direkte Referenz
                                 analysisExecutor = cameraExecutor,
                                 laneBitmap = laneBitmapState.value,
                                 laneDeviation = laneDeviationState.value,
-                                warningLevel = warningLevelState.value // <-- NEU: WarningLevel übergeben
+                                warningLevel = warningLevelState.value,
+                                // Übergebe die Dimensionen an das Composable
+                                analyzedBitmapWidth = lastAnalyzedBitmapWidth.value,
+                                analyzedBitmapHeight = lastAnalyzedBitmapHeight.value
                             )
                         }
                         permissionsState.allPermissionsGranted && !isDetectorInitialized.value -> {
                             LoadingIndicator("Initialisiere Detektor...")
                         }
                         else -> {
-                            LoadingIndicator("Kamera- und Standortberechtigung erforderlich.")
+                            LoadingIndicator("Kamera- & Standortberechtigung erforderlich.")
                         }
                     }
                 }
 
-                // Lifecycle-Management für Listener und Updates
+                // Lifecycle Management
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner, permissionsState.allPermissionsGranted) {
                     val observer = LifecycleEventObserver { _, event ->
-                        if (permissionsState.allPermissionsGranted) { // Nur wenn Berechtigungen da sind
-                            when (event) {
-                                Lifecycle.Event.ON_RESUME -> {
-                                    orientationEventListener?.enable()
-                                    startLocationUpdates()
-                                }
-                                Lifecycle.Event.ON_PAUSE -> {
-                                    orientationEventListener?.disable()
-                                    stopLocationUpdates()
-                                }
-                                else -> {}
-                            }
-                        } else {
-                            orientationEventListener?.disable()
-                            stopLocationUpdates()
-                        }
+                        handleLifecycleEvent(event, permissionsState.allPermissionsGranted)
                     }
                     lifecycleOwner.lifecycle.addObserver(observer)
-
-                    // Initiales Starten, wenn Berechtigungen bereits erteilt sind
-                    if (permissionsState.allPermissionsGranted) {
+                    if (permissionsState.allPermissionsGranted) { // Initial start if already granted
                         orientationEventListener?.enable()
                         startLocationUpdates()
                     }
-
                     onDispose {
                         lifecycleOwner.lifecycle.removeObserver(observer)
                         orientationEventListener?.disable()
@@ -220,34 +185,92 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                     }
                 }
 
-                // NEU: LaunchedEffect zum Zurücksetzen des Warn-Flashs
+                // Warn-Flash Reset
                 LaunchedEffect(warningLevelState.value) {
                     if (warningLevelState.value != WarningLevel.None) {
-                        // Dauer des Aufleuchtens in Millisekunden
-                        delay(350L) // <-- Anpassen nach Bedarf (z.B. 300ms - 500ms)
-                        warningLevelState.value = WarningLevel.None // Zurücksetzen
+                        delay(350L)
+                        if (warningLevelState.value != WarningLevel.None) { // Erneute Prüfung, falls sich Zustand geändert hat
+                            warningLevelState.value = WarningLevel.None
+                        }
                     }
                 }
             }
         }
     }
 
-    private fun initializeDetector() {
-        cameraExecutor.execute {
-            try {
-                detector = Detector(
-                    context = baseContext,
-                    modelPath = Constants.MODEL_PATH,
-                    labelPath = Constants.LABELS_PATH,
-                    detectorListener = this
-                )
-                runOnUiThread {
-                    isDetectorInitialized.value = true
-                    Log.d("MainActivity", "Detector initialized successfully.")
+    private fun initializeMediaPlayers() {
+        try {
+            laneSoftPlayer = MediaPlayer.create(this, R.raw.lanesoftwarning)
+            laneHardPlayer = MediaPlayer.create(this, R.raw.lanehardwarning)
+            laneSoftPlayer.setVolume(1f, 1f)
+            laneHardPlayer.setVolume(1f, 1f)
+            // Start ist hier nicht ideal, besser bei Bedarf in analyzeBitmap
+            // laneSoftPlayer.prepareAsync() // Besser prepareAsync oder create verwenden
+            // laneHardPlayer.prepareAsync()
+        } catch (e: Exception) {
+            Log.e("MediaPlayer", "Error initializing media players", e)
+            showError("Warn Töne konnten nicht geladen werden.")
+        }
+    }
+
+    private fun showError(message: String) {
+        // Implementiere eine Methode, um dem Benutzer Fehler anzuzeigen
+        // z.B. mit einem Toast oder einer Snackbar
+        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    private fun handleLifecycleEvent(event: Lifecycle.Event, hasPermissions: Boolean) {
+        if (hasPermissions) {
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    orientationEventListener?.enable()
+                    startLocationUpdates()
+                    // MediaPlayers ggf. neu starten oder vorbereiten, wenn sie gestoppt wurden
                 }
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Error initializing Detector", e)
-                // Optional: Fehler im UI anzeigen
+                Lifecycle.Event.ON_PAUSE -> {
+                    orientationEventListener?.disable()
+                    stopLocationUpdates()
+                    // MediaPlayers stoppen und freigeben, um Ressourcen zu sparen
+                }
+                Lifecycle.Event.ON_DESTROY -> {
+                    releaseMediaPlayers()
+                }
+                else -> {}
+            }
+        } else { // Keine Berechtigungen
+            orientationEventListener?.disable()
+            stopLocationUpdates()
+            releaseMediaPlayers()
+        }
+    }
+
+    private fun releaseMediaPlayers() {
+        if (::laneSoftPlayer.isInitialized) {
+            try { laneSoftPlayer.release() } catch (e: Exception) {Log.e("MediaPlayer", "Error releasing soft player", e)}
+        }
+        if (::laneHardPlayer.isInitialized) {
+            try { laneHardPlayer.release() } catch (e: Exception) {Log.e("MediaPlayer", "Error releasing hard player", e)}
+        }
+    }
+
+    private fun initializeDetector() {
+        if (!isDetectorInitialized.value) { // Nur initialisieren, wenn noch nicht geschehen
+            cameraExecutor.execute {
+                try {
+                    detector = Detector(
+                        context = baseContext,
+                        modelPath = Constants.MODEL_PATH,
+                        labelPath = Constants.LABELS_PATH,
+                        detectorListener = this
+                    )
+                    runOnUiThread {
+                        isDetectorInitialized.value = true
+                        Log.d("MainActivity", "Detector initialized successfully.")
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error initializing Detector", e)
+                    runOnUiThread { showError("Fehler beim Initialisieren des Detektors.") }
+                }
             }
         }
     }
@@ -257,15 +280,14 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
             override fun onLocationResult(locationResult: LocationResult) {
                 locationResult.lastLocation?.let { location ->
                     if (location.hasSpeed()) {
-                        speedState.value = location.speed // Geschwindigkeit in m/s
+                        speedState.value = location.speed
                     }
                 }
             }
-
             override fun onLocationAvailability(locationAvailability: LocationAvailability) {
                 if (!locationAvailability.isLocationAvailable) {
                     Log.w("Location", "Location not available.")
-                    speedState.value = 0.0f // Geschwindigkeit zurücksetzen
+                    speedState.value = 0.0f
                 }
             }
         }
@@ -275,15 +297,11 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         orientationEventListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(orientation: Int) {
                 if (orientation == ORIENTATION_UNKNOWN) return
-
                 val newOrientation = when (orientation) {
-                    in 45..134 -> Configuration.ORIENTATION_LANDSCAPE // Landscape Right (Reverse)
-                    in 135..224 -> Configuration.ORIENTATION_PORTRAIT // Upside down Portrait (Ignored for alignment usually)
-                    in 225..314 -> Configuration.ORIENTATION_LANDSCAPE // Landscape Left
-                    else -> Configuration.ORIENTATION_PORTRAIT // Normal Portrait
+                    in 45..134 -> Configuration.ORIENTATION_LANDSCAPE
+                    in 225..314 -> Configuration.ORIENTATION_LANDSCAPE
+                    else -> Configuration.ORIENTATION_PORTRAIT
                 }
-
-                // Aktualisiere nur, wenn sich die Hauptausrichtung (Hoch/Quer) ändert
                 if (newOrientation != physicalOrientationState.value) {
                     physicalOrientationState.value = newOrientation
                 }
@@ -294,132 +312,189 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
     @SuppressLint("MissingPermission")
     private fun startLocationUpdates() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            Log.w("Location", "Permission check failed in startLocationUpdates")
-            return // Sollte nicht passieren wegen Check im Effect, aber sicher ist sicher
+            return
         }
-
         val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000)
-            .setMinUpdateIntervalMillis(500)
-            .build()
-
+            .setMinUpdateIntervalMillis(500).build()
         try {
-            fusedLocationClient.requestLocationUpdates(
-                locationRequest,
-                locationCallback,
-                Looper.getMainLooper()
-            )
+            fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
             Log.d("Location", "Location updates requested.")
-        } catch (e: SecurityException) {
-            Log.e("Location", "Failed to start location updates due to security exception.", e)
-        }
+        } catch (e: SecurityException) { Log.e("Location", "Failed to start location updates.", e) }
     }
 
     private fun stopLocationUpdates() {
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
             Log.d("Location", "Location updates stopped.")
-        } catch (e: Exception) {
-            Log.e("Location", "Error stopping location updates", e)
-        }
+        } catch (e: Exception) { Log.e("Location", "Error stopping location updates", e) }
     }
 
     private fun toggleGpu(enabled: Boolean) {
-        isGpuEnabledState.value = enabled
-        cameraExecutor.submit {
-            if (::detector.isInitialized) {
-                try {
-                    detector.restart(enabled)
-                    Log.d("MainActivity", "Detector restarted with GPU=${enabled}")
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Error restarting detector", e)
+        if (isGpuEnabledState.value != enabled) { // Nur neu starten, wenn Wert sich ändert
+            isGpuEnabledState.value = enabled
+            boundingBoxesState.value = emptyList() // Reset UI states on toggle
+            inferenceTimeState.value = 0L
+            laneBitmapState.value = null
+            laneDeviationState.value = null
+            cameraExecutor.submit {
+                if (::detector.isInitialized) {
+                    try {
+                        Log.d("MainActivity", "Restarting detector with GPU=${enabled}...")
+                        detector.restart(enabled)
+                        Log.d("MainActivity", "Detector restarted.")
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Error restarting detector", e)
+                        runOnUiThread { showError("Fehler beim Umschalten der GPU.") }
+                    }
                 }
             }
         }
-        boundingBoxesState.value = emptyList()
-        inferenceTimeState.value = 0L
     }
 
-    private fun toggleLaneDetection(enabled: Boolean){
+
+    private fun toggleLaneDetection(enabled: Boolean) {
         isLaneDetectionEnabledState.value = enabled
+        if (!enabled) { // Wenn deaktiviert, Overlay löschen
+            laneBitmapState.value = null
+            laneDeviationState.value = null
+            warningLevelState.value = WarningLevel.None
+        }
     }
 
+    private fun toggleDebugView(enabled: Boolean) {
+        isDebugModeState.value = enabled
+        // Setze die Debug-Flags im LaneDetector entsprechend
+        // Diese Flags müssen im LaneDetector existieren und public sein (oder über eine Methode setzbar)
+        LaneDetector.drawDebugMask = enabled
+        LaneDetector.drawDebugEdges = enabled
+        LaneDetector.drawDebugHoughLines = enabled
+        // LaneDetector.drawDebugWindows = enabled // Falls du den Polyfit-Code nutzt
+        // LaneDetector.drawPixelPoints = enabled // Falls du den Polyfit-Code nutzt
+    }
 
+    // Wird von CameraX aufgerufen für jeden Frame
     private fun analyzeBitmap(bitmap: Bitmap) {
-        if (::detector.isInitialized) {
-            detector.detect(bitmap)
-            if(isLaneDetectionEnabledState.value) {
+        // Speichere die Dimensionen dieses Bitmaps für das OverlayView
+        lastAnalyzedBitmapWidth.value = bitmap.width
+        lastAnalyzedBitmapHeight.value = bitmap.height
+
+        if (::detector.isInitialized && !cameraExecutor.isShutdown) {
+            // Objekterkennung ausführen
+            detector.detect(bitmap) // Diese löst onDetect/onEmptyDetect aus
+
+            // Spurerkennung ausführen (wenn aktiviert)
+            if (isLaneDetectionEnabledState.value) {
+                // Führe die Spurerkennung in einem Hintergrundthread aus,
+                // aber aktualisiere den State im UI-Thread.
+                // cameraExecutor.execute { // Optional: Wenn LaneDetector zu langsam ist
                 val laneDetectionResult: Pair<Bitmap?, Double?>? = try {
                     LaneDetector.detectLanes(bitmap)
-
                 } catch (e: Exception) {
                     Log.e("MainActivity", "Error calling LaneDetector.detectLanes", e)
                     null
-                } finally {
-                    // bitmapCopyForLanes.recycle() // Normalerweise nicht nötig/sicher
                 }
 
-
-                laneBitmapState.value = laneDetectionResult?.first  // Das Bitmap geht in den State
-                laneDeviationState.value =
-                    laneDetectionResult?.second // Die Abweichung geht in den State
-
-
-                // Logik zum Setzen des WarningLevels und Abspielen der Sounds
-                try {
-                    val deviation = laneDeviationState.value
-                    if (deviation != null) {
-                        val absDeviation = kotlin.math.abs(deviation)
-                        if (absDeviation > 0.14) {
-                            Log.d("MainActivity", "Lane deviation: $deviation critical!")
-                            if (warningLevelState.value != WarningLevel.Hard) { // Nur setzen, wenn nicht schon Hard
-                                warningLevelState.value = WarningLevel.Hard
-                            }
-                            // Sound kann weiterhin hier oder im LaunchedEffect ausgelöst werden
-                            if (!laneHardPlayer.isPlaying) laneHardPlayer.start()
-                        } else if (absDeviation > 0.07) {
-                            Log.d("MainActivity", "Lane deviation: $deviation moderate.")
-                            // Nur setzen, wenn nicht schon Hard (Soft überschreibt Hard nicht)
-                            if (warningLevelState.value == WarningLevel.None) {
-                                warningLevelState.value = WarningLevel.Soft
-                            }
-                            if (!laneSoftPlayer.isPlaying && !laneHardPlayer.isPlaying) laneSoftPlayer.start() // Soft nur wenn nicht schon Hard spielt
-                        } else {
-                            // Kein kritisches Level, kein Flash nötig (wird durch LaunchedEffect zurückgesetzt)
-                            // warningLevelState.value = WarningLevel.None // --> Nicht hier setzen, das macht der LaunchedEffect
-                        }
-                    } else {
-                        // warningLevelState.value = WarningLevel.None // --> Nicht hier setzen
+                // Aktualisiere UI State im UI Thread
+                runOnUiThread {
+                    laneBitmapState.value = laneDetectionResult?.first
+                    laneDeviationState.value = laneDetectionResult?.second
+                    handleLaneDeviation(laneDetectionResult?.second)
+                }
+                // } // Ende von cameraExecutor.execute (optional)
+            } else {
+                // Stelle sicher, dass die Spurdaten gelöscht werden, wenn deaktiviert
+                if (laneBitmapState.value != null || laneDeviationState.value != null) {
+                    runOnUiThread {
+                        laneBitmapState.value = null
+                        laneDeviationState.value = null
+                        warningLevelState.value = WarningLevel.None
                     }
-                } catch (e: Exception) {
-                    Log.w("MainActivity", "Error checking lane deviation or playing sound.", e)
-                    // warningLevelState.value = WarningLevel.None // --> Nicht hier setzen
                 }
-            }else{
-                warningLevelState.value = WarningLevel.None
-                laneBitmapState.value = null
-                laneDeviationState.value = null
-
             }
+        }
+        // Recycle nicht das Bitmap hier, es wird evtl. noch von LaneDetector oder UI gebraucht
+    }
 
+    // Hilfsfunktion zur Handhabung der Spurerkennungsergebnisse
+    private fun handleLaneDeviation(deviation: Double?) {
+        try {
+            if (deviation != null) {
+                val absDeviation = abs(deviation)
+                var newWarningLevel = WarningLevel.None
+                var playHard = false
+                var playSoft = false
 
+                if (absDeviation > 0.14) { // Harte Warnung Schwelle
+                    Log.d("MainActivity", "Lane deviation: $deviation critical!")
+                    newWarningLevel = WarningLevel.Hard
+                    playHard = true
+                } else if (absDeviation > 0.07) { // Weiche Warnung Schwelle
+                    Log.d("MainActivity", "Lane deviation: $deviation moderate.")
+                    // Nur weiche Warnung, wenn nicht schon hart
+                    if (warningLevelState.value != WarningLevel.Hard) {
+                        newWarningLevel = WarningLevel.Soft
+                        playSoft = true
+                    } else {
+                        newWarningLevel = WarningLevel.Hard // Bleibe bei Hard, wenn schon aktiv
+                    }
+                }
 
+                // Spiele Sounds nur, wenn nötig und Player bereit
+                if (playHard && ::laneHardPlayer.isInitialized) { // && laneHardPlayer.isReady ?
+                    if (!laneHardPlayer.isPlaying) {
+                        try {
+                            laneHardPlayer.seekTo(0) // Zurückspulen vor dem Start
+                            laneHardPlayer.start()
+                        } catch (e: IllegalStateException){ Log.e("MediaPlayer", "Hard player start failed", e)}
+                    }
+                    // Wenn Hard spielt, Soft nicht starten
+                    if (::laneSoftPlayer.isInitialized && laneSoftPlayer.isPlaying) {
+                        try { laneSoftPlayer.pause() } catch(e: IllegalStateException){ Log.e("MediaPlayer", "Soft player pause failed", e)}
+                    }
+                } else if (playSoft && ::laneSoftPlayer.isInitialized) { // && laneSoftPlayer.isReady ?
+                    // Spiele Soft nur, wenn Hard nicht spielt
+                    if (::laneHardPlayer.isInitialized && !laneHardPlayer.isPlaying && !laneSoftPlayer.isPlaying) {
+                        try {
+                            laneSoftPlayer.seekTo(0)
+                            laneSoftPlayer.start()
+                        } catch (e: IllegalStateException){ Log.e("MediaPlayer", "Soft player start failed", e)}
+                    }
+                }
+
+                // Aktualisiere den WarningLevel State nur, wenn er sich ändert
+                if (warningLevelState.value != newWarningLevel) {
+                    warningLevelState.value = newWarningLevel
+                }
+
+            } else {
+                // Keine Abweichung erkannt, setze Warnung zurück (wird durch LaunchedEffect erledigt)
+                // warningLevelState.value = WarningLevel.None // Nicht hier, LaunchedEffect macht das
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Error checking lane deviation or playing sound.", e)
+            // warningLevelState.value = WarningLevel.None // Sicherstellen, dass bei Fehler kein alter Zustand bleibt? Nein, LA machts.
         }
     }
 
+
     // --- Detector.DetectorListener Implementierung ---
     override fun onEmptyDetect() {
+        // Wird vom Detector aufgerufen, wenn nichts erkannt wird
         runOnUiThread {
             if (!isDestroyed && !isFinishing) {
                 boundingBoxesState.value = emptyList()
+                // Hier NICHT die Lane-States zurücksetzen, die kommen von analyzeBitmap
             }
         }
     }
 
     override fun onDetect(boundingBoxes: List<BoundingBox>, inferenceTime: Long) {
+        // Wird vom Detector aufgerufen, wenn Objekte erkannt wurden
         runOnUiThread {
             if (!isDestroyed && !isFinishing) {
                 boundingBoxesState.value = boundingBoxes
                 inferenceTimeState.value = inferenceTime
+                // Hier NICHT die Lane-States beeinflussen
             }
         }
     }
@@ -429,6 +504,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         super.onDestroy()
         stopLocationUpdates()
         orientationEventListener?.disable()
+        releaseMediaPlayers() // MediaPlayers freigeben
         if (::cameraExecutor.isInitialized && !cameraExecutor.isShutdown) {
             cameraExecutor.shutdown()
             Log.d("MainActivity", "CameraExecutor shutdown.")
@@ -437,10 +513,9 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
             try {
                 detector.close()
                 Log.d("MainActivity", "Detector closed.")
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Error closing detector", e)
-            }
+            } catch (e: Exception) { Log.e("MainActivity", "Error closing detector", e) }
         }
+        Log.d("MainActivity", "onDestroy completed.")
     }
 }
 
@@ -449,69 +524,61 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
 @Composable
 fun LoadingIndicator(text: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(modifier = Modifier.padding(bottom = 16.dp)) // Ladekreis hinzugefügt
-        Text(text, modifier = Modifier.padding(top = 60.dp)) // Text unter dem Kreis
+        Column(horizontalAlignment = Alignment.CenterHorizontally) { // Column hinzugefügt
+            CircularProgressIndicator()
+            Spacer(modifier = Modifier.height(16.dp)) // Abstand
+            Text(text)
+        }
     }
 }
+
 
 @Composable
 fun CameraDetectionScreen(
     boundingBoxes: List<BoundingBox>,
     inferenceTime: Long,
     laneBitmap: Bitmap?,
-    laneDeviation: Double?, // <-- NEU: Parameter für Abweichung
+    laneDeviation: Double?,
     isGpuEnabled: Boolean,
     isLaneDetectionEnabled: Boolean,
+    isDebuggingEnabled: Boolean,
     speed: Float,
     physicalOrientation: Int,
     warningLevel: WarningLevel,
+    // Neu: Übergebe die Dimensionen des analysierten Bitmaps
+    analyzedBitmapWidth: Int,
+    analyzedBitmapHeight: Int,
     onGpuToggle: (Boolean) -> Unit,
     onLaneDetectionToggle: (Boolean) -> Unit,
+    onDebugViewToggle: (Boolean) -> Unit,
     onBitmapAnalyzed: (Bitmap) -> Unit,
     analysisExecutor: ExecutorService
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
+
+    // Erstelle OverlayView nur einmal
     val overlayView = remember { OverlayView(context, null) }
 
     LaunchedEffect(cameraProviderFuture, previewView) {
-        if (previewView != null) {
+        previewView?.let { pv ->
             val cameraProvider = try { cameraProviderFuture.get() } catch (e: Exception) { null }
-            if (cameraProvider != null) {
-                bindCameraUseCases(
-                    context = context,
-                    cameraProvider = cameraProvider,
-                    lifecycleOwner = lifecycleOwner,
-                    previewView = previewView!!,
-                    onBitmapAnalyzed = onBitmapAnalyzed,
-                    executor = analysisExecutor
-                )
+            cameraProvider?.let {
+                bindCameraUseCases(context, it, lifecycleOwner, pv, onBitmapAnalyzed, analysisExecutor)
             }
         }
     }
 
-    // --- Animation Setup ---
     val infiniteTransition = rememberInfiniteTransition(label = "WarningPulse")
-
-    // Animate alpha based on the warning level.
-    // We only run the animation when warningLevel is not None.
-    // When it's None, alpha is effectively 0 because the Box won't be composed.
     val animatedAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.05f, // Start slightly visible
-        targetValue = when (warningLevel) {
-            // Determine max brightness of pulse
-            WarningLevel.Soft -> 0.4f // Yellow pulses less intensely
-            WarningLevel.Hard -> 0.8f  // Red pulses more intensely
-            WarningLevel.None -> 0.05f // Target doesn't matter when not pulsing, but keep it low
-        },
+        initialValue = 0.05f,
+        targetValue = if(warningLevel == WarningLevel.None) 0.05f else if (warningLevel == WarningLevel.Soft) 0.4f else 0.8f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 200, easing = LinearEasing), // Duration of one fade in/out cycle
-            repeatMode = RepeatMode.Reverse // Fade in, then fade out
-        ),
-        label = "WarningAlphaPulse"
+            animation = tween(durationMillis = 300, easing = LinearEasing), // Dauer leicht erhöht
+            repeatMode = RepeatMode.Reverse
+        ), label = "WarningAlpha"
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -521,8 +588,7 @@ fun CameraDetectionScreen(
                 PreviewView(ctx).apply {
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
                     )
                 }.also { previewView = it }
             },
@@ -534,174 +600,175 @@ fun CameraDetectionScreen(
             factory = { overlayView },
             modifier = Modifier.fillMaxSize(),
             update = { view ->
-                view.setResults(boundingBoxes)
-                view.setLaneBitmap(laneBitmap)
+                // *** WICHTIG: Übergebe die Dimensionen an OverlayView ***
+                view.setResults(boundingBoxes, analyzedBitmapWidth, analyzedBitmapHeight)
+                view.setLaneBitmap(laneBitmap, analyzedBitmapWidth, analyzedBitmapHeight)
             }
         )
 
-        // --- Pulsating Visual Warning Overlay ---
+        // Pulsating Warning Overlay
         if (warningLevel != WarningLevel.None) {
-            val baseColor = when (warningLevel) {
-                WarningLevel.Soft -> Color.Yellow
-                WarningLevel.Hard -> Color.Red
-                WarningLevel.None -> Color.Transparent // Should not happen due to if
-            }
-
-            // Use the animatedAlpha for the gradient colors
+            val baseColor = if (warningLevel == WarningLevel.Soft) Color.Yellow else Color.Red
             val gradient = Brush.horizontalGradient(
-                colors = listOf(
-                    baseColor.copy(alpha = animatedAlpha), // Use animated alpha
-                    Color.Transparent,
-                    baseColor.copy(alpha = animatedAlpha)  // Use animated alpha
-                )
+                colors = listOf(baseColor.copy(alpha = animatedAlpha), Color.Transparent, baseColor.copy(alpha = animatedAlpha))
             )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(gradient)
-            )
-        }
-        // --- End Pulsating Overlay ---
-
-        // Inferenzzeit
-        if (inferenceTime > 0) {
-            Text(
-                text = "$inferenceTime ms",
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp)
-                    .background(Color.Black.copy(alpha = 0.5f), shape = MaterialTheme.shapes.medium)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                color = Color.White,
-                fontSize = 12.sp
-            )
+            Box(modifier = Modifier.fillMaxSize().background(gradient))
         }
 
-        // Geschwindigkeit
-        val speedAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
-            Alignment.TopStart else Alignment.TopCenter
-
-        Card(
-            modifier = Modifier
-                .align(speedAlignment)
-                .padding(16.dp),
-            shape = MaterialTheme.shapes.large,
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0x99000000))
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                val speedKmh = (speed * 3.6f).roundToInt()
-                Text(
-                    text = "$speedKmh km/h",
-                    color = Color.White,
-                    fontSize = 36.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Limit: --",
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 16.sp
-                )
-            }
-        }
-
-        // GPU Toggle
-        val gpuAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
-            Alignment.BottomStart else Alignment.BottomCenter
-
-        laneDeviation?.let { deviation ->
-            LaneCenterIndicator(
-                deviation = deviation,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 80.dp) // Position anpassen
-                    .fillMaxWidth(0.6f) // Breite anpassen
-                    .height(20.dp)
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
-            )
-        }
-
-        Card(
-            modifier = Modifier
-                .align(gpuAlignment)
-                .padding(16.dp),
-            shape = MaterialTheme.shapes.large,
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0x99000000))
-        ) {
-            Column {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("GPU", color = Color.White, fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = isGpuEnabled,
-                        onCheckedChange = onGpuToggle,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Green,
-                            uncheckedThumbColor = Color.LightGray
-                        )
-                    )
-                }
-
-                Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically){
-                    Text("Lane Detection", color= Color.White, fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = isLaneDetectionEnabled,
-                        onCheckedChange = onLaneDetectionToggle,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.Green,
-                        )
-                    )
-                }
-            }
-
-        }
+        // UI Elemente (Inferenzzeit, Geschwindigkeit, Toggles, Deviation Indicator)
+        InfoAndControlsOverlay(
+            inferenceTime = inferenceTime,
+            speed = speed,
+            laneDeviation = laneDeviation,
+            isGpuEnabled = isGpuEnabled,
+            isLaneDetectionEnabled = isLaneDetectionEnabled,
+            isDebuggingEnabled = isDebuggingEnabled,
+            physicalOrientation = physicalOrientation,
+            onGpuToggle = onGpuToggle,
+            onLaneDetectionToggle = onLaneDetectionToggle,
+            onDebugViewToggle = onDebugViewToggle
+        )
     }
 }
 
 @Composable
-fun LaneCenterIndicator(
-    deviation: Double, // Erwartet Wert ca. -1.0 (ganz links) bis 1.0 (ganz rechts)
-    modifier: Modifier = Modifier // Dieser Modifier bekommt die Größenbeschränkungen (z.B. .fillMaxWidth(0.6f))
+fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
+    inferenceTime: Long,
+    speed: Float,
+    laneDeviation: Double?,
+    isGpuEnabled: Boolean,
+    isLaneDetectionEnabled: Boolean,
+    isDebuggingEnabled: Boolean,
+    physicalOrientation: Int,
+    onGpuToggle: (Boolean) -> Unit,
+    onLaneDetectionToggle: (Boolean) -> Unit,
+    onDebugViewToggle: (Boolean) -> Unit
 ) {
-    // Der äußere Box definiert den Bereich, in dem der Indikator platziert wird.
-    // Der übergebene 'modifier' steuert die Größe dieses Bereichs.
-    Box(modifier = modifier) {
-
-        // Mittellinie (Ziel) - Wird im Zentrum des äußeren Box platziert
-        Divider(
-            color = Color.White.copy(alpha = 0.5f),
-            thickness = 2.dp,
+    // --- Inferenzzeit ---
+    if (inferenceTime > 0) {
+        Text(
+            text = "$inferenceTime ms",
             modifier = Modifier
-                .fillMaxHeight() // Nimmt die volle Höhe des äußeren Box ein
-                .width(2.dp)
-                .align(Alignment.Center) // Zentriert die Divider-Linie selbst
+                .align(Alignment.TopEnd)
+                .padding(12.dp)
+                .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp)) // Kleinere Rundung
+                .padding(horizontal = 6.dp, vertical = 2.dp), // Weniger Padding
+            color = Color.White,
+            fontSize = 12.sp
         )
+    }
 
-        // Aktuelle Position (Indikator)
-        // Wir verwenden BiasAlignment, um diesen inneren Box relativ zum äußeren Box zu positionieren.
-        // deviation (-1 bis 1) passt direkt zum horizontalBias.
-        val horizontalBias = deviation.coerceIn(-1.0, 1.0).toFloat() // Sicherstellen, dass der Wert im Bereich ist
+    // --- Geschwindigkeit ---
+    val speedAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
+        Alignment.TopStart else Alignment.TopCenter
+    Card(
+        modifier = Modifier
+            .align(speedAlignment)
+            .padding(16.dp),
+        shape = RoundedCornerShape(12.dp), // Etwas rundere Ecken
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f)) // Dunklerer Hintergrund
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), // Angepasstes Padding
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            val speedKmh = (speed * 3.6f).roundToInt()
+            Text(
+                text = "$speedKmh",
+                color = Color.White,
+                fontSize = 32.sp, // Etwas kleiner
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "km/h", // Einheit separat
+                color = Color.White.copy(alpha = 0.8f),
+                fontSize = 14.sp
+            )
+            // Optional: Limit hinzufügen, wenn verfügbar
+            // Text(text = "Limit: --", ...)
+        }
+    }
 
+    // --- Spurabweichungsanzeige ---
+    laneDeviation?.let { deviation ->
+        LaneCenterIndicator(
+            deviation = deviation,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 100.dp) // Etwas höher, um Platz für Controls zu machen
+                .fillMaxWidth(0.5f) // Etwas schmaler
+                .height(16.dp) // Etwas flacher
+                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+        )
+    }
+
+    // --- Steuerungs-Toggles ---
+    val controlsAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
+        Alignment.BottomStart else Alignment.BottomCenter
+    Card(
+        modifier = Modifier
+            .align(controlsAlignment)
+            .padding(16.dp),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))
+    ) {
+        // Flexibles Layout für Controls (horizontal im Querformat, vertikal im Hochformat?)
+        // Hier einfach Column belassen, passt meistens.
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+            ControlToggleRow("GPU", isGpuEnabled, onGpuToggle)
+            ControlToggleRow("Spur", isLaneDetectionEnabled, onLaneDetectionToggle)
+            ControlToggleRow("Debug", isDebuggingEnabled, onDebugViewToggle)
+        }
+    }
+}
+
+
+// Hilfs-Composable für einen einzelnen Toggle
+@Composable
+fun ControlToggleRow(label: String, isChecked: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 0.dp) // Weniger vertikales Padding
+    ) {
+        Text(label, color = Color.White, fontSize = 13.sp, modifier = Modifier.width(50.dp)) // Feste Breite für Label
+        Spacer(modifier = Modifier.width(4.dp))
+        Switch(
+            checked = isChecked,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.primary, // Theme-Farbe
+                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                uncheckedThumbColor = Color.LightGray,
+                uncheckedTrackColor = Color.DarkGray.copy(alpha = 0.5f)
+            ),
+            modifier = Modifier.size(width = 40.dp, height = 20.dp) // Kompakterer Switch
+        )
+    }
+}
+
+
+@Composable
+fun LaneCenterIndicator(
+    deviation: Double, // -1.0 (links) to 1.0 (rechts)
+    modifier: Modifier = Modifier
+) {
+    Box(modifier = modifier) {
+        // Mittellinie
+        Divider(
+            color = Color.White.copy(alpha = 0.4f), // Heller
+            thickness = 1.dp, // Dünner
+            modifier = Modifier.fillMaxHeight().width(1.dp).align(Alignment.Center)
+        )
+        // Indikator
+        val horizontalBias = deviation.coerceIn(-1.0, 1.0).toFloat()
         Box(
             modifier = Modifier
-                // Richtet den *Mittelpunkt* dieses Indikator-Boxes horizontal
-                // basierend auf dem Bias aus (-1 = links, 0 = mitte, 1 = rechts).
-                // Vertikal wird er zentriert (verticalBias = 0f).
                 .align(BiasAlignment(horizontalBias = horizontalBias, verticalBias = 0f))
-                // Gibt dem Indikator selbst eine Größe.
-                .width(8.dp) // Breite des gelben Punktes/Strichs
-                .fillMaxHeight(0.8f) // Höhe des Punktes (etwas kleiner als der Hintergrund)
-                .background(Color.Yellow, CircleShape) // Gelber Kreis als Indikator
+                .width(6.dp) // Schmaler
+                .fillMaxHeight(0.7f)
+                .background(Color.Yellow, CircleShape) // Kreis bleibt gut
         )
     }
 }
@@ -724,40 +791,31 @@ private fun bindCameraUseCases(
     }
 
     val imageAnalysis = ImageAnalysis.Builder()
-        // Wähle eine moderate Auflösung für die Analyse, falls nötig, um Performance zu verbessern
-        // .setTargetResolution(android.util.Size(1280, 720))
+        // Zielauflösung kann helfen, Performance zu stabilisieren, falls nötig
+        // .setTargetResolution(Size(1280, 720))
         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-        // Kein Output Format setzen, damit YUV für imageProxyToBitmap kommt
+        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888) // Explizit für YUV
         .build()
 
     imageAnalysis.setAnalyzer(executor) { imageProxy ->
-        val bitmap = imageProxyToBitmap(imageProxy) // Diese Funktion muss existieren!
-        // imageProxy wird innerhalb von imageProxyToBitmap geschlossen oder direkt danach
-        // imageProxy.close() // --> Schließen erfolgt jetzt im finally von imageProxyToBitmap
+        // Die Konvertierung + Analyse geschieht hier
+        val bitmap = imageProxyToBitmap(imageProxy) // imageProxy wird IN dieser Funktion geschlossen!
 
         if (bitmap != null) {
-            onBitmapAnalyzed(bitmap)
+            onBitmapAnalyzed(bitmap) // Rufe die Analysefunktion der Activity auf
         } else {
-            Log.w("bindCameraUseCases", "Bitmap conversion failed.")
-            // Wichtig: imageProxy trotzdem schließen, falls Konvertierung fehlschlägt
-            // Dies sollte idealerweise in einem finally-Block in imageProxyToBitmap geschehen.
-            // Wenn nicht, hier schließen:
-            // imageProxy.close()
+            Log.w("bindCameraUseCases", "Bitmap conversion failed or imageProxy already closed.")
         }
     }
 
     try {
         cameraProvider.unbindAll()
         cameraProvider.bindToLifecycle(
-            lifecycleOwner,
-            cameraSelector,
-            preview,
-            imageAnalysis
+            lifecycleOwner, cameraSelector, preview, imageAnalysis
         )
-        Log.d("bindCameraUseCases", "Camera use cases bound successfully.")
+        Log.d("bindCameraUseCases", "Camera use cases bound.")
     } catch (exc: Exception) {
         Log.e("bindCameraUseCases", "Use case binding failed", exc)
     }
 }
-
 
