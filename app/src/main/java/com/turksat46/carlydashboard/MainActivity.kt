@@ -1,4 +1,4 @@
-package com.turksat46.carlydashboard // <-- Dein Paketname hier
+package com.turksat46.carlydashboard
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -14,6 +14,7 @@ import android.util.Size // Für TargetResolution
 import android.view.OrientationEventListener
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,10 +30,15 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -159,7 +166,8 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                             )
                         }
                         permissionsState.allPermissionsGranted && !isDetectorInitialized.value -> {
-                            LoadingIndicator("Initialisiere Detektor...")
+                            //LoadingIndicator("Initialisiere Detektor...")
+                            warningView()
                         }
                         else -> {
                             LoadingIndicator("Kamera- & Standortberechtigung erforderlich.")
@@ -216,7 +224,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
     private fun showError(message: String) {
         // Implementiere eine Methode, um dem Benutzer Fehler anzuzeigen
         // z.B. mit einem Toast oder einer Snackbar
-        android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show()
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     }
 
     private fun handleLifecycleEvent(event: Lifecycle.Event, hasPermissions: Boolean) {
@@ -424,11 +432,11 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                 var playHard = false
                 var playSoft = false
 
-                if (absDeviation > 0.14) { // Harte Warnung Schwelle
+                if (absDeviation > 0.30) { // Harte Warnung Schwelle
                     Log.d("MainActivity", "Lane deviation: $deviation critical!")
                     newWarningLevel = WarningLevel.Hard
                     playHard = true
-                } else if (absDeviation > 0.07) { // Weiche Warnung Schwelle
+                } else if (absDeviation > 0.14) { // Weiche Warnung Schwelle
                     Log.d("MainActivity", "Lane deviation: $deviation moderate.")
                     // Nur weiche Warnung, wenn nicht schon hart
                     if (warningLevelState.value != WarningLevel.Hard) {
@@ -528,6 +536,17 @@ fun LoadingIndicator(text: String) {
             CircularProgressIndicator()
             Spacer(modifier = Modifier.height(16.dp)) // Abstand
             Text(text)
+        }
+    }
+}
+
+@Composable
+fun warningView(){
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center){
+        Column (horizontalAlignment = Alignment.CenterHorizontally){
+            Icon(Icons.Filled.Warning, "Warnung")
+            Spacer(modifier = Modifier.height(16.dp))
+            Text("Hinweis: Die Nutzung von Car.ly Dashboard während der Fahrt sollte stets unter Beachtung \nder geltenden Verkehrsregeln und unter Ablenkungsvermeidung erfolgen. \nAchte darauf, dein Smartphone sicher zu befestigen und \ndeine Aufmerksamkeit dem Straßenverkehr zu widmen.", textAlign = TextAlign.Center)
         }
     }
 }
@@ -650,7 +669,7 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
             text = "$inferenceTime ms",
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(12.dp)
+                .padding(25.dp)
                 .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp)) // Kleinere Rundung
                 .padding(horizontal = 6.dp, vertical = 2.dp), // Weniger Padding
             color = Color.White,
@@ -664,9 +683,9 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
     Card(
         modifier = Modifier
             .align(speedAlignment)
-            .padding(16.dp),
+            .padding(25.dp),
         shape = RoundedCornerShape(12.dp), // Etwas rundere Ecken
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f)) // Dunklerer Hintergrund
     ) {
         Column(
@@ -677,17 +696,25 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
             Text(
                 text = "$speedKmh",
                 color = Color.White,
-                fontSize = 32.sp, // Etwas kleiner
+                fontSize = 60.sp, // Etwas kleiner
                 fontWeight = FontWeight.Bold
             )
             Text(
                 text = "km/h", // Einheit separat
                 color = Color.White.copy(alpha = 0.8f),
-                fontSize = 14.sp
+                fontSize = 36.sp
             )
             // Optional: Limit hinzufügen, wenn verfügbar
             // Text(text = "Limit: --", ...)
         }
+    }
+
+    Button(
+        modifier = Modifier.align(Alignment.TopEnd)
+            .padding(20.dp, 60.dp),
+        onClick = {  }
+    ) {
+        Icon(Icons.Filled.Settings, "Einstellungen")
     }
 
     // --- Spurabweichungsanzeige ---
@@ -709,21 +736,26 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
     Card(
         modifier = Modifier
             .align(controlsAlignment)
-            .padding(16.dp),
+            .padding(20.dp),
         shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))
     ) {
         // Flexibles Layout für Controls (horizontal im Querformat, vertikal im Hochformat?)
         // Hier einfach Column belassen, passt meistens.
         Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
             ControlToggleRow("GPU", isGpuEnabled, onGpuToggle)
+        }
+        Column (modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)){
             ControlToggleRow("Spur", isLaneDetectionEnabled, onLaneDetectionToggle)
+
+        }
+        Column (modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)){
             ControlToggleRow("Debug", isDebuggingEnabled, onDebugViewToggle)
+
         }
     }
 }
-
 
 // Hilfs-Composable für einen einzelnen Toggle
 @Composable
@@ -733,7 +765,7 @@ fun ControlToggleRow(label: String, isChecked: Boolean, onToggle: (Boolean) -> U
         modifier = Modifier.padding(vertical = 0.dp) // Weniger vertikales Padding
     ) {
         Text(label, color = Color.White, fontSize = 13.sp, modifier = Modifier.width(50.dp)) // Feste Breite für Label
-        Spacer(modifier = Modifier.width(4.dp))
+        Spacer(modifier = Modifier.width(8.dp))
         Switch(
             checked = isChecked,
             onCheckedChange = onToggle,
@@ -818,4 +850,5 @@ private fun bindCameraUseCases(
         Log.e("bindCameraUseCases", "Use case binding failed", exc)
     }
 }
+
 
