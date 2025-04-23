@@ -5,12 +5,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.graphics.* // Import für Matrix etc. in imageProxyToBitmap
+import android.graphics.Bitmap
 import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Looper
 import android.util.Log
-import android.util.Size // Für TargetResolution
 import android.view.OrientationEventListener
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -20,7 +19,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy // Import für ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -35,23 +33,50 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -69,16 +94,20 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
-import com.google.android.gms.location.*
-import com.turksat46.carlydashboard.ui.theme.CarlyDashboardTheme // Dein Theme
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationAvailability
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.turksat46.carlydashboard.ui.theme.CarlyDashboardTheme
 import kotlinx.coroutines.delay
 import org.opencv.android.OpenCVLoader
-import java.io.ByteArrayOutputStream // Import für imageProxyToBitmap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import com.turksat46.carlydashboard.ProcessDetectorData
 
 
 enum class WarningLevel {
@@ -88,6 +117,7 @@ enum class WarningLevel {
 class MainActivity : ComponentActivity(), Detector.DetectorListener {
 
     private lateinit var detector: Detector
+    private lateinit var processDetectorData: ProcessDetectorData
     private lateinit var cameraExecutor: ExecutorService
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private lateinit var locationCallback: LocationCallback
@@ -109,11 +139,12 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
     private val warningLevelState = mutableStateOf(WarningLevel.None)
     private val isDebugModeState = mutableStateOf(false)
 
+    private val detectedSignResourceIdsState = mutableStateOf<List<Int>>(emptyList())
+
     // --- Neu: Speichert die Dimensionen des letzten analysierten Bildes ---
     // Wird benötigt, um dem OverlayView die korrekte Basisgröße mitzuteilen
     private var lastAnalyzedBitmapWidth = mutableStateOf(1)
     private var lastAnalyzedBitmapHeight = mutableStateOf(1)
-
 
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,6 +158,8 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         createLocationCallback()
         createOrientationListener()
         initializeMediaPlayers()
+
+
 
         // OpenCV laden
         if (!OpenCVLoader.initDebug()) {
@@ -155,6 +188,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     when {
                         permissionsState.allPermissionsGranted && isDetectorInitialized.value -> {
+                            val currentSignIds = detectedSignResourceIdsState.value
                             CameraDetectionScreen(
                                 boundingBoxes = boundingBoxesState.value,
                                 inferenceTime = inferenceTimeState.value,
@@ -173,7 +207,8 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                                 warningLevel = warningLevelState.value,
                                 // Übergebe die Dimensionen an das Composable
                                 analyzedBitmapWidth = lastAnalyzedBitmapWidth.value,
-                                analyzedBitmapHeight = lastAnalyzedBitmapHeight.value
+                                analyzedBitmapHeight = lastAnalyzedBitmapHeight.value,
+                                erkannteSchilderResourceIds = currentSignIds,
                             )
                         }
                         permissionsState.allPermissionsGranted && !isDetectorInitialized.value -> {
@@ -509,12 +544,18 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
 
     override fun onDetect(boundingBoxes: List<BoundingBox>, inferenceTime: Long) {
         // Wird vom Detector aufgerufen, wenn Objekte erkannt wurden
+        val freshresourceIds = boundingBoxes.map { bbox ->
+
+            ProcessDetectorData.getDrawableResourceIdForClass(bbox.cls) // Use the helper
+        }
+
         runOnUiThread {
             if (!isDestroyed && !isFinishing) {
                 boundingBoxesState.value = boundingBoxes
                 inferenceTimeState.value = inferenceTime
-
+                val resourceIds = freshresourceIds.distinct()
                 // Hier NICHT die Lane-States beeinflussen
+                detectedSignResourceIdsState.value = resourceIds
             }
         }
     }
@@ -537,6 +578,8 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         }
         Log.d("MainActivity", "onDestroy completed.")
     }
+
+
 }
 
 // -------------------- Composables --------------------
@@ -593,7 +636,8 @@ fun CameraDetectionScreen(
     onLaneDetectionToggle: (Boolean) -> Unit,
     onDebugViewToggle: (Boolean) -> Unit,
     onBitmapAnalyzed: (Bitmap) -> Unit,
-    analysisExecutor: ExecutorService
+    analysisExecutor: ExecutorService,
+    erkannteSchilderResourceIds: List<Int>
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -671,7 +715,8 @@ fun CameraDetectionScreen(
             onSettingsToggle = { showSettingsPanel = !showSettingsPanel },
             onGpuToggle = onGpuToggle,
             onLaneDetectionToggle = onLaneDetectionToggle,
-            onDebugViewToggle = onDebugViewToggle
+            onDebugViewToggle = onDebugViewToggle,
+            erkannteSchilderResourceIds = erkannteSchilderResourceIds,
         )
 
         // --- Settings Panel (Animiert) ---
@@ -705,6 +750,8 @@ fun CameraDetectionScreen(
         }
     }
 }
+
+
 
 // --- Neuer Settings Panel Composable ---
 @Composable
@@ -804,7 +851,7 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
     inferenceTime: Long,
     speed: Float,
     laneDeviation: Double?,
-    isGpuEnabled: Boolean,
+    erkannteSchilderResourceIds: List<Int>,    isGpuEnabled: Boolean,
     isLaneDetectionEnabled: Boolean,
     isDebuggingEnabled: Boolean,
     physicalOrientation: Int,
@@ -870,7 +917,7 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
         Spacer(modifier = Modifier.height(8.dp)) // Fügt etwas Abstand hinzu
 
         // --- Sign Bubble Placeholder ---
-        SignBubblePlaceholder(listOf(Icons.Filled.Warning)) // <<< Jetzt innerhalb der Column, unter der Card
+        SignBubblePlaceholder(resourceIds = erkannteSchilderResourceIds)
     }
 
     // --- Andere Overlays / Controls ---
@@ -925,11 +972,11 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
 
 @Composable
 fun SignBubblePlaceholder(
-    icons: List<ImageVector>, // Liste der anzuzeigenden Icons
+    resourceIds: List<Int>, // Liste der anzuzeigenden Icons
     modifier: Modifier = Modifier // Erlaube externe Modifikatoren
 ) {
     // Wenn keine Icons vorhanden sind, zeige nichts an (oder einen Placeholder)
-    if (icons.isEmpty()) {
+    if (resourceIds.isEmpty()) {
         // Optional: Zeige einen leeren Platzhalter oder gar nichts
         //Spacer(modifier = modifier.size(70.dp)) // Beispiel für leeren Platzhalter
         Box(modifier = modifier
@@ -972,9 +1019,10 @@ fun SignBubblePlaceholder(
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            icons.forEach { icon ->
+            resourceIds.forEach { resourceId ->
+                val iconVector = ImageVector.vectorResource(id = resourceId)
                 Icon(
-                    imageVector = icon,
+                    imageVector = iconVector,
                     // Besser: Dynamischer ContentDescription oder null
                     contentDescription = "Verkehrszeichen",
                     modifier = Modifier.size(50.dp),
@@ -989,20 +1037,20 @@ fun SignBubblePlaceholder(
 @Composable
 private fun SignBubblePreviewSingle() {
     // Verwende hier ein verfügbares Icon, z.B. aus Material Icons
-    SignBubblePlaceholder(icons = listOf(ImageVector.vectorResource(R.drawable.speed_50)))
+    SignBubblePlaceholder(resourceIds = listOf(R.drawable.speed_50))
 }
 
 @androidx.compose.ui.tooling.preview.Preview(showBackground = true)
 @Composable
 fun SignBubblePreviewDouble() {
     // Verwende hier verfügbare Icons
-    SignBubblePlaceholder(icons = listOf(ImageVector.vectorResource(R.drawable.speed_30), ImageVector.vectorResource(R.drawable.stop)))
+    SignBubblePlaceholder(resourceIds = listOf(R.drawable.speed_30, R.drawable.stop, R.drawable.no_overtaking))
 }
 
 @androidx.compose.ui.tooling.preview.Preview(showBackground = true)
 @Composable
 fun SignBubblePreviewEmpty() {
-    SignBubblePlaceholder(icons = listOf()) // Zeigt nichts an
+    SignBubblePlaceholder(resourceIds = listOf()) // Zeigt nichts an
 }
 
 

@@ -111,7 +111,7 @@ class OverlayView(context: Context?, attrs: AttributeSet?) : View(context, attrs
             canvas.drawRect(rectF, boxPaint)
 
             // Zeichne den Klassennamen über dem transformierten Rechteck
-            val drawableText = box.clsName
+            val drawableText = box.clsName + ": "+box.cnf
             textPaint.getTextBounds(drawableText, 0, drawableText.length, bounds)
             val textWidth = bounds.width()
             val textHeight = bounds.height()

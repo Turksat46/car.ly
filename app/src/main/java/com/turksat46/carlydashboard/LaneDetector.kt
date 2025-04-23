@@ -6,6 +6,7 @@ import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import kotlin.math.*
+import androidx.core.graphics.createBitmap
 
 object LaneDetector {
 
@@ -228,14 +229,14 @@ object LaneDetector {
             drawCenteringInfo(transparentOverlayMat, normalizedDeviation, finalLeftAvgParams, finalRightAvgParams, imgWidth, imgHeight, roiYStart)
 
             // --- Schritt 10: Konvertieren & Zustand speichern ---
-            outputBitmap = Bitmap.createBitmap(imgWidth, imgHeight, Bitmap.Config.ARGB_8888)
+            outputBitmap = createBitmap(imgWidth, imgHeight)
             Utils.matToBitmap(transparentOverlayMat, outputBitmap)
 
             previousLeftAvgParams = finalLeftAvgParams?.clone() // Speichere die Durchschnittsparameter
             previousRightAvgParams = finalRightAvgParams?.clone()
 
             val endTime = System.currentTimeMillis()
-            // Log.d(TAG, "Processing time: ${endTime - startTime} ms")
+            Log.d(TAG, "Processing time: ${endTime - startTime} ms")
 
             return Pair(outputBitmap, normalizedDeviation)
 
