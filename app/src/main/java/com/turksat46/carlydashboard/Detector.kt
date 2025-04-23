@@ -18,6 +18,7 @@ import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
+import androidx.core.graphics.scale
 
 class Detector(
     private val context: Context,
@@ -98,6 +99,7 @@ class Detector(
             Interpreter.Options().apply{
                 if(compatList.isDelegateSupportedOnThisDevice){
                     val delegateOptions = compatList.bestOptionsForThisDevice
+                    Log.w("Detector", "Delegate Options: $delegateOptions")
                     this.addDelegate(GpuDelegate(delegateOptions))
                 } else {
                     this.setNumThreads(4)
@@ -105,6 +107,7 @@ class Detector(
             }
         } else {
             Interpreter.Options().apply{
+                Log.w("Detector", "GPU not supported - Falling back to CPU")
                 this.setNumThreads(4)
             }
         }
@@ -125,7 +128,7 @@ class Detector(
 
         var inferenceTime = SystemClock.uptimeMillis()
 
-        val resizedBitmap = Bitmap.createScaledBitmap(frame, tensorWidth, tensorHeight, false)
+        val resizedBitmap = frame.scale(tensorWidth, tensorHeight, true)
 
         val tensorImage = TensorImage(INPUT_IMAGE_TYPE)
         tensorImage.load(resizedBitmap)
@@ -239,7 +242,7 @@ class Detector(
         private const val INPUT_STANDARD_DEVIATION = 255f
         private val INPUT_IMAGE_TYPE = DataType.FLOAT32
         private val OUTPUT_IMAGE_TYPE = DataType.FLOAT32
-        private const val CONFIDENCE_THRESHOLD = 0.2F
+        private const val CONFIDENCE_THRESHOLD = 0.4F
         private const val IOU_THRESHOLD = 0.5F
     }
 }

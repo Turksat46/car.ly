@@ -24,18 +24,25 @@ import androidx.camera.core.ImageProxy // Import für ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -44,10 +51,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -68,6 +78,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.turksat46.carlydashboard.ProcessDetectorData
 
 
 enum class WarningLevel {
@@ -480,7 +491,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
             }
         } catch (e: Exception) {
             Log.w("MainActivity", "Error checking lane deviation or playing sound.", e)
-            // warningLevelState.value = WarningLevel.None // Sicherstellen, dass bei Fehler kein alter Zustand bleibt? Nein, LA machts.
+            warningLevelState.value = WarningLevel.None // Sicherstellen, dass bei Fehler kein alter Zustand bleibt? Nein, LA machts.
         }
     }
 
@@ -502,6 +513,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
             if (!isDestroyed && !isFinishing) {
                 boundingBoxesState.value = boundingBoxes
                 inferenceTimeState.value = inferenceTime
+
                 // Hier NICHT die Lane-States beeinflussen
             }
         }
@@ -542,11 +554,21 @@ fun LoadingIndicator(text: String) {
 
 @Composable
 fun warningView(){
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center){
+    Box(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp), // Padding für Text
+        contentAlignment = Alignment.Center){
         Column (horizontalAlignment = Alignment.CenterHorizontally){
-            Icon(Icons.Filled.Warning, "Warnung")
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("Hinweis: Die Nutzung von Car.ly Dashboard während der Fahrt sollte stets unter Beachtung \nder geltenden Verkehrsregeln und unter Ablenkungsvermeidung erfolgen. \nAchte darauf, dein Smartphone sicher zu befestigen und \ndeine Aufmerksamkeit dem Straßenverkehr zu widmen.", textAlign = TextAlign.Center)
+            Icon(Icons.Filled.Warning, "Warnung", Modifier.size(48.dp)) // Größeres Icon
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("Wichtiger Hinweis", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Die Nutzung von Car.ly Dashboard während der Fahrt sollte stets unter Beachtung der geltenden Verkehrsregeln und unter Vermeidung von Ablenkung erfolgen. Achte darauf, dein Smartphone sicher zu befestigen und deine Aufmerksamkeit dem Straßenverkehr zu widmen.",
+                textAlign = TextAlign.Center,
+                fontSize = 14.sp,
+                lineHeight = 20.sp // Bessere Lesbarkeit
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            CircularProgressIndicator() // Zeigt an, dass im Hintergrund geladen wird
+            Text("Initialisiere...", fontSize = 12.sp, color = Color.Gray)
         }
     }
 }
@@ -577,6 +599,9 @@ fun CameraDetectionScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
     var previewView by remember { mutableStateOf<PreviewView?>(null) }
+
+    // --- State für Settings Panel ---
+    var showSettingsPanel by remember { mutableStateOf(false) }
 
     // Erstelle OverlayView nur einmal
     val overlayView = remember { OverlayView(context, null) }
@@ -643,9 +668,133 @@ fun CameraDetectionScreen(
             isLaneDetectionEnabled = isLaneDetectionEnabled,
             isDebuggingEnabled = isDebuggingEnabled,
             physicalOrientation = physicalOrientation,
+            onSettingsToggle = { showSettingsPanel = !showSettingsPanel },
             onGpuToggle = onGpuToggle,
             onLaneDetectionToggle = onLaneDetectionToggle,
             onDebugViewToggle = onDebugViewToggle
+        )
+
+        // --- Settings Panel (Animiert) ---
+        // val configuration = LocalConfiguration.current
+        // val screenWidthDp = configuration.screenWidthDp.dp
+        // val settingsPanelWidth = (screenWidthDp * 0.6f).coerceAtMost(300.dp) // Max 300dp oder 60% Breite
+        AnimatedVisibility(
+            visible = showSettingsPanel,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                // Höhe dynamisch anpassen (bis zur ungefähren Position der Speed Card)
+                // Wir nutzen hier Padding, um den Bereich einzugrenzen.
+                // 50.dp oben für Statusbar/Notch, 20.dp seitlich, ~180dp unten für Platz unter Speed Card
+                .padding(top = 50.dp, end = 20.dp, bottom = (if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 20 else 180).dp)
+                .fillMaxHeight() // Füllt den verfügbaren vertikalen Platz im gepaddeten Bereich
+                .widthIn(max = 300.dp) // Begrenzt die Breite
+            ,
+            enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(), // Von rechts rein sliden
+            exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut() // Nach rechts raus sliden
+        ) {
+            SettingsPanel(
+                isGpuEnabled = isGpuEnabled,
+                isLaneDetectionEnabled = isLaneDetectionEnabled,
+                isDebuggingEnabled = isDebuggingEnabled,
+                onGpuToggle = onGpuToggle,
+                onLaneDetectionToggle = onLaneDetectionToggle,
+                onDebugViewToggle = onDebugViewToggle,
+                onDismissRequest = { showSettingsPanel = false } // Add dismiss callback
+
+            )
+        }
+    }
+}
+
+// --- Neuer Settings Panel Composable ---
+@Composable
+fun SettingsPanel(
+    isGpuEnabled: Boolean,
+    isLaneDetectionEnabled: Boolean,
+    isDebuggingEnabled: Boolean,
+    onGpuToggle: (Boolean) -> Unit,
+    onLaneDetectionToggle: (Boolean) -> Unit,
+    onDebugViewToggle: (Boolean) -> Unit,
+    onDismissRequest: () -> Unit // Callback to close the panel
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxSize(), // Füllt den von AnimatedVisibility vorgegebenen Platz
+        shape = RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp), // Nur linke Ecken abrunden
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.85f)) // Etwas durchsichtig
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 16.dp, vertical = 20.dp) // Innenabstand
+                .fillMaxHeight() // Spalte füllt die Kartenhöhe
+        ) {
+            Row( modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween){
+
+            }
+            Text(
+                "Einstellungen",
+                color = Color.White,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 10.dp)
+            )
+            IconButton(onClick = onDismissRequest, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Schließen")
+            }
+            Divider(color = Color.Gray.copy(alpha = 0.5f)) // Trennlinie
+            Spacer(modifier = Modifier.height(15.dp))
+
+            Column (verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Einzelne Einstellungen als Zeilen
+                SettingsToggleRow("GPU Beschleunigung", isGpuEnabled, onGpuToggle)
+                SettingsToggleRow("Spurerkennung", isLaneDetectionEnabled, onLaneDetectionToggle)
+                SettingsToggleRow("Debugging Ansicht", isDebuggingEnabled, onDebugViewToggle)
+            }
+
+            // Optional: Füller am Ende, damit Elemente oben starten
+            Spacer(modifier = Modifier.weight(1f))
+            Button(
+                onClick = { },
+            ){Text("Alle Einstellungen anzeigen")}
+
+            // Optional: Info-Text am Ende
+            Text(
+                "Änderungen werden sofort angewendet.",
+                color = Color.LightGray,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+            )
+        }
+    }
+}
+
+// Hilfs-Composable für einen einzelnen Toggle im Settings Panel
+@Composable
+fun SettingsToggleRow(label: String, isChecked: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp) // Etwas vertikales Padding
+    ) {
+        Text(
+            label,
+            color = Color.White,
+            fontSize = 14.sp, // Normale Größe
+            modifier = Modifier.weight(1f) // Nimmt verfügbaren Platz links vom Switch
+        )
+        Switch(
+            checked = isChecked,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.primary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                uncheckedThumbColor = Color.LightGray,
+                uncheckedTrackColor = Color.DarkGray.copy(alpha = 0.5f)
+            ),
+            modifier = Modifier.size(width = 48.dp, height = 24.dp) // Standardgröße Switch
         )
     }
 }
@@ -661,7 +810,8 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
     physicalOrientation: Int,
     onGpuToggle: (Boolean) -> Unit,
     onLaneDetectionToggle: (Boolean) -> Unit,
-    onDebugViewToggle: (Boolean) -> Unit
+    onDebugViewToggle: (Boolean) -> Unit,
+    onSettingsToggle: () -> Unit // Funktion zum Öffnen/Schließen des Panels
 ) {
     // --- Inferenzzeit ---
     if (inferenceTime > 0) {
@@ -677,45 +827,87 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
         )
     }
 
-    // --- Geschwindigkeit ---
+    // --- Geschwindigkeit & Sign Bubble (gruppiert in einer Column) ---
     val speedAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
         Alignment.TopStart else Alignment.TopCenter
-    Card(
+
+    Column( // <<< Wrap Card and Placeholder in a Column
         modifier = Modifier
-            .align(speedAlignment)
-            .padding(25.dp),
-        shape = RoundedCornerShape(12.dp), // Etwas rundere Ecken
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f)) // Dunklerer Hintergrund
+            .align(speedAlignment) // <<< Align the Column itself
+            .padding(25.dp),       // <<< Apply padding to the Column
+        horizontalAlignment = Alignment.CenterHorizontally // Center items within the Column
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), // Angepasstes Padding
-            horizontalAlignment = Alignment.CenterHorizontally
+        // --- Geschwindigkeit Card ---
+        Card(
+            // Remove align and padding from the Card's modifier, it's now on the Column
+            // modifier = Modifier.padding(25.dp), // Removed padding
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))
         ) {
-            val speedKmh = (speed * 3.6f).roundToInt()
-            Text(
-                text = "$speedKmh",
-                color = Color.White,
-                fontSize = 60.sp, // Etwas kleiner
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "km/h", // Einheit separat
-                color = Color.White.copy(alpha = 0.8f),
-                fontSize = 36.sp
-            )
-            // Optional: Limit hinzufügen, wenn verfügbar
-            // Text(text = "Limit: --", ...)
+            Column(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                val speedKmh = (speed * 3.6f).roundToInt()
+                Text(
+                    text = "$speedKmh",
+                    color = Color.White,
+                    fontSize = 70.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "km/h",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 36.sp
+                )
+                // Optional: Limit hinzufügen, wenn verfügbar
+                // Text(text = "Limit: --", ...)
+            }
         }
+
+        // --- Optionaler Abstand ---
+        Spacer(modifier = Modifier.height(8.dp)) // Fügt etwas Abstand hinzu
+
+        // --- Sign Bubble Placeholder ---
+        SignBubblePlaceholder(listOf(Icons.Filled.Warning)) // <<< Jetzt innerhalb der Column, unter der Card
     }
 
-    Button(
-        modifier = Modifier.align(Alignment.TopEnd)
-            .padding(20.dp, 60.dp),
-        onClick = {  }
+    // --- Andere Overlays / Controls ---
+    // Hier könnten die Toggle-Buttons etc. platziert werden,
+    // z.B. am unteren Rand mit Modifier.align(Alignment.BottomCenter)
+
+
+    Card(modifier = Modifier
+        .align(speedAlignment)
+        .padding(50.dp),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))
     ) {
-        Icon(Icons.Filled.Settings, "Einstellungen")
+
     }
+
+
+    // Bleibt TopEnd, löst das Öffnen/Schließen aus
+    IconButton( // IconButton hat weniger visuellen Overhead als Button
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(top = 20.dp, end = 20.dp)
+            .size(100.dp),
+        onClick = onSettingsToggle // Hier wird der State in CameraDetectionScreen geändert
+    ) {
+        Icon(
+            Icons.Filled.Settings,
+            contentDescription = "Einstellungen",
+            tint = Color.White, // Icon Farbe
+            modifier = Modifier
+                .background(Color.Black.copy(alpha = 0.5f), CircleShape) // Hintergrund für Sichtbarkeit
+                .padding(8.dp) // Padding innen
+                .size(50.dp) // Größe des Icons
+        )
+    }
+
 
     // --- Spurabweichungsanzeige ---
     laneDeviation?.let { deviation ->
@@ -729,55 +921,88 @@ fun BoxScope.InfoAndControlsOverlay( // Use BoxScope for alignment
                 .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
         )
     }
+}
 
-    // --- Steuerungs-Toggles ---
-    val controlsAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
-        Alignment.BottomStart else Alignment.BottomCenter
-    Card(
-        modifier = Modifier
-            .align(controlsAlignment)
-            .padding(20.dp),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.6f))
+@Composable
+fun SignBubblePlaceholder(
+    icons: List<ImageVector>, // Liste der anzuzeigenden Icons
+    modifier: Modifier = Modifier // Erlaube externe Modifikatoren
+) {
+    // Wenn keine Icons vorhanden sind, zeige nichts an (oder einen Placeholder)
+    if (icons.isEmpty()) {
+        // Optional: Zeige einen leeren Platzhalter oder gar nichts
+        //Spacer(modifier = modifier.size(70.dp)) // Beispiel für leeren Platzhalter
+        Box(modifier = modifier
+            // Breite passt sich dem Inhalt an
+            .wrapContentWidth()
+            // Höhe bleibt konstant (oder nimm .wrapContentHeight() für dynamische Höhe)
+            .height(70.dp)
+            .background(
+                Color.Black.copy(alpha = 0.5f),
+                // RoundedCornerShape(percent = 50) // Macht Ecken rund, wird zur Pillenform bei > 1 Icon
+                RoundedCornerShape(35.dp) // Alternative: Fester Radius, ergibt auch Pillenform
+                // CircleShape // Funktioniert nur gut bei exakt einem Icon oder wenn width == height
+            )
+            // Passe Padding an, evtl. mehr horizontal für breitere Boxen
+            .padding(horizontal = 15.dp, vertical = 4.dp),
+            contentAlignment = Alignment.Center){
+            Icon(ImageVector.vectorResource(R.drawable.baseline_disabled_visible_24), "Speed Limit",modifier = Modifier.size(40.dp), tint = Color.White)
+        }
+        return
+    }
+
+    Box(
+        modifier = modifier
+            // Breite passt sich dem Inhalt an
+            .wrapContentWidth()
+            // Höhe bleibt konstant (oder nimm .wrapContentHeight() für dynamische Höhe)
+            .height(70.dp)
+            .background(
+                Color.Black.copy(alpha = 0.5f),
+                // RoundedCornerShape(percent = 50) // Macht Ecken rund, wird zur Pillenform bei > 1 Icon
+                RoundedCornerShape(35.dp) // Alternative: Fester Radius, ergibt auch Pillenform
+                // CircleShape // Funktioniert nur gut bei exakt einem Icon oder wenn width == height
+            )
+            // Passe Padding an, evtl. mehr horizontal für breitere Boxen
+            .padding(vertical=6.dp, horizontal = 10.dp),
+        contentAlignment = Alignment.Center
     ) {
-        // Flexibles Layout für Controls (horizontal im Querformat, vertikal im Hochformat?)
-        // Hier einfach Column belassen, passt meistens.
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-            ControlToggleRow("GPU", isGpuEnabled, onGpuToggle)
-        }
-        Column (modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)){
-            ControlToggleRow("Spur", isLaneDetectionEnabled, onLaneDetectionToggle)
-
-        }
-        Column (modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)){
-            ControlToggleRow("Debug", isDebuggingEnabled, onDebugViewToggle)
-
+        Row(
+            // Fügt automatisch Abstand zwischen den Icons hinzu
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            icons.forEach { icon ->
+                Icon(
+                    imageVector = icon,
+                    // Besser: Dynamischer ContentDescription oder null
+                    contentDescription = "Verkehrszeichen",
+                    modifier = Modifier.size(50.dp),
+                    tint = Color.Unspecified// Größe des einzelnen Icons
+                )
+            }
         }
     }
 }
 
-// Hilfs-Composable für einen einzelnen Toggle
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
 @Composable
-fun ControlToggleRow(label: String, isChecked: Boolean, onToggle: (Boolean) -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(vertical = 0.dp) // Weniger vertikales Padding
-    ) {
-        Text(label, color = Color.White, fontSize = 13.sp, modifier = Modifier.width(50.dp)) // Feste Breite für Label
-        Spacer(modifier = Modifier.width(8.dp))
-        Switch(
-            checked = isChecked,
-            onCheckedChange = onToggle,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.primary, // Theme-Farbe
-                checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                uncheckedThumbColor = Color.LightGray,
-                uncheckedTrackColor = Color.DarkGray.copy(alpha = 0.5f)
-            ),
-            modifier = Modifier.size(width = 40.dp, height = 20.dp) // Kompakterer Switch
-        )
-    }
+private fun SignBubblePreviewSingle() {
+    // Verwende hier ein verfügbares Icon, z.B. aus Material Icons
+    SignBubblePlaceholder(icons = listOf(ImageVector.vectorResource(R.drawable.speed_50)))
+}
+
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
+@Composable
+fun SignBubblePreviewDouble() {
+    // Verwende hier verfügbare Icons
+    SignBubblePlaceholder(icons = listOf(ImageVector.vectorResource(R.drawable.speed_30), ImageVector.vectorResource(R.drawable.stop)))
+}
+
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
+@Composable
+fun SignBubblePreviewEmpty() {
+    SignBubblePlaceholder(icons = listOf()) // Zeigt nichts an
 }
 
 
