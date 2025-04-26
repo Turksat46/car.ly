@@ -4,8 +4,6 @@
 <p>
   <b>Car.ly Dashboard - Dein KI-gestütztes Android Auto Erlebnis</b>
 </p>
-![Car ly Dashboard (1)](https://github.com/user-attachments/assets/bc7b2a8b-a056-45ec-abe9-7352269028e3)
-
 <p>This is a german app hat only works with german street signs. You can use the lane assistant but signs will not be recognized</p>
 
 <table>
