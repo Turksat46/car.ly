@@ -1,8 +1,8 @@
 <div align="center" style="text-align: center;">
 
-<h1>Car.ly Dashboard</h1>
+<h1>open::dashboard</h1>
 <p>
-  <b>Car.ly Dashboard - Dein KI-gestütztes Android Auto Erlebnis</b>
+  <b>open::dashboard - Dein KI-gestütztes Android Auto Erlebnis</b>
 </p>
 <p>This is a german app hat only works with german street signs. You can use the lane assistant but signs will not be recognized</p>
 
