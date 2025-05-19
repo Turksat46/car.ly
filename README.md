@@ -13,3 +13,5 @@
     <td><img src="https://github.com/user-attachments/assets/42865c6c-402e-401b-a196-9e9887372902" ></img></td>
   </tr>
 </table>
+
+[Join the public testing](https://play.google.com/store/apps/details?id=com.turksat46.carlydashboard)
