@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
+import androidx.annotation.Nullable
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
@@ -19,15 +20,18 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import androidx.core.graphics.scale
+import org.tensorflow.lite.support.model.Model
+import java.io.File
 
 class Detector(
     private val context: Context,
-    private val modelPath: String,
+    private val modelPath: String?,
+    private val modelFile: File?,
     private val labelPath: String,
     private val detectorListener: DetectorListener,
 ) {
 
-    private var interpreter: Interpreter
+    private lateinit var interpreter: Interpreter
     private var labels = mutableListOf<String>()
 
     private var tensorWidth = 0
@@ -52,8 +56,13 @@ class Detector(
             }
         }
 
-        val model = FileUtil.loadMappedFile(context, modelPath)
-        interpreter = Interpreter(model, options)
+
+        if(modelFile == null){
+            val model = FileUtil.loadMappedFile(context, Constants.MODEL_PATH)
+            interpreter = Interpreter(model, options)
+        }else{
+            interpreter = Interpreter(modelFile, options)
+        }
 
         val inputShape = interpreter.getInputTensor(0)?.shape()
         val outputShape = interpreter.getOutputTensor(0)?.shape()
@@ -112,8 +121,12 @@ class Detector(
             }
         }
 
-        val model = FileUtil.loadMappedFile(context, modelPath)
-        interpreter = Interpreter(model, options)
+        if(modelFile == null){
+            val model = FileUtil.loadMappedFile(context, Constants.MODEL_PATH)
+            interpreter = Interpreter(model, options)
+        }else{
+            interpreter = Interpreter(modelFile, options)
+        }
     }
 
     fun close() {

@@ -101,18 +101,22 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.firebase.FirebaseApp
+import com.google.firebase.ktx.Firebase
+import com.google.firebase.ktx.app
+import com.google.firebase.ml.modeldownloader.CustomModel
+import com.google.firebase.ml.modeldownloader.CustomModelDownloadConditions
+import com.google.firebase.ml.modeldownloader.DownloadType
+import com.google.firebase.ml.modeldownloader.FirebaseModelDownloader
 import com.turksat46.carlydashboard.ui.theme.CarlyDashboardTheme
 import kotlinx.coroutines.delay
 import org.opencv.android.OpenCVLoader
+import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-
-enum class WarningLevel {
-    None, Soft, Hard
-}
 
 class MainActivity : ComponentActivity(), Detector.DetectorListener {
 
@@ -148,17 +152,17 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
 
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         cameraExecutor = Executors.newSingleThreadExecutor()
-        initializeDetector()
+
         createLocationCallback()
         createOrientationListener()
         initializeMediaPlayers()
-
 
 
         // OpenCV laden
@@ -173,6 +177,8 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
 
         setContent {
             CarlyDashboardTheme {
+                FirebaseApp.initializeApp(this)
+
                 val permissionsState = rememberMultiplePermissionsState(
                     permissions = listOf(
                         Manifest.permission.CAMERA,
@@ -221,6 +227,18 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                     }
                 }
 
+                var conditions = CustomModelDownloadConditions.Builder()
+                    .build()
+                FirebaseModelDownloader.getInstance()
+                    .getModel("street-sign-detection", DownloadType.LOCAL_MODEL_UPDATE_IN_BACKGROUND, conditions)
+                    .addOnSuccessListener { model: CustomModel? ->
+                        //Erfolgreich runtergeladen
+                        val modelFile = model?.file
+                        if(modelFile != null){
+                            initializeDetector(modelFile)
+                        }
+                    }
+
                 // Lifecycle Management
                 val lifecycleOwner = LocalLifecycleOwner.current
                 DisposableEffect(lifecycleOwner, permissionsState.allPermissionsGranted) {
@@ -247,6 +265,30 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                             warningLevelState.value = WarningLevel.None
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private fun initializeDetector(modelFile: File) {
+        if (!isDetectorInitialized.value) { // Nur initialisieren, wenn noch nicht geschehen
+            cameraExecutor.execute {
+                try {
+                    Log.w("FilePath", "Model file path: ${modelFile.path}"+modelFile.extension)
+                    detector = Detector(
+                        context = baseContext,
+                        modelPath = modelFile.path,
+                        labelPath = Constants.LABELS_PATH,
+                        detectorListener = this,
+                        modelFile = modelFile
+                    )
+                    runOnUiThread {
+                        isDetectorInitialized.value = true
+                        Log.d("MainActivity", "Detector initialized successfully.")
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Error initializing Detector", e)
+                    runOnUiThread { showError("Fehler beim Initialisieren des Detektors.") }
                 }
             }
         }
@@ -304,28 +346,6 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         }
         if (::laneHardPlayer.isInitialized) {
             try { laneHardPlayer.release() } catch (e: Exception) {Log.e("MediaPlayer", "Error releasing hard player", e)}
-        }
-    }
-
-    private fun initializeDetector() {
-        if (!isDetectorInitialized.value) { // Nur initialisieren, wenn noch nicht geschehen
-            cameraExecutor.execute {
-                try {
-                    detector = Detector(
-                        context = baseContext,
-                        modelPath = Constants.MODEL_PATH,
-                        labelPath = Constants.LABELS_PATH,
-                        detectorListener = this
-                    )
-                    runOnUiThread {
-                        isDetectorInitialized.value = true
-                        Log.d("MainActivity", "Detector initialized successfully.")
-                    }
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Error initializing Detector", e)
-                    runOnUiThread { showError("Fehler beim Initialisieren des Detektors.") }
-                }
-            }
         }
     }
 
@@ -1051,6 +1071,28 @@ fun SignBubblePreviewDouble() {
 @Composable
 fun SignBubblePreviewEmpty() {
     SignBubblePlaceholder(resourceIds = listOf()) // Zeigt nichts an
+}
+
+@androidx.compose.ui.tooling.preview.Preview(showBackground = true)
+@Composable
+fun CameraDetectionScreenPreview() {
+    CameraDetectionScreen(
+        boundingBoxes = emptyList(),
+        inferenceTime = 0, laneBitmap = null, laneDeviation = null,
+        isGpuEnabled = true,
+        isLaneDetectionEnabled = true,
+        isDebuggingEnabled = false,
+        speed = 0f,
+        physicalOrientation = 1,
+        warningLevel = WarningLevel.None,
+        analyzedBitmapWidth = 100,
+        analyzedBitmapHeight = 100,
+        onGpuToggle = {},
+        onLaneDetectionToggle = {},
+        onDebugViewToggle = {},
+        onBitmapAnalyzed = {},
+        analysisExecutor = Executors.newSingleThreadExecutor(),
+        erkannteSchilderResourceIds = listOf(0))
 }
 
 

@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.google.gms.google.services)
 }
 
 android {
@@ -63,6 +64,9 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite-api:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+
+    implementation("com.google.firebase:firebase-ml-modeldownloader:25.0.1")
+
 
     implementation ("com.google.accompanist:accompanist-permissions:0.34.0")
     implementation ("com.google.android.gms:play-services-location:21.2.0")// Oder neueste Version

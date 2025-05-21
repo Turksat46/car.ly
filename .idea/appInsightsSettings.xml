@@ -22,10 +22,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.turksat46.carlydashboard" />
+                  <option name="mobileSdkAppId" value="1:298087027295:android:8f9aad5693414e10ca41ea" />
+                  <option name="projectId" value="open-dashboard-4466" />
+                  <option name="projectNumber" value="298087027295" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
