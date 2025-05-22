@@ -75,6 +75,8 @@ dependencies {
 
     implementation ("androidx.compose.ui:ui:1.6.4")
     implementation ("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+
+    implementation ("androidx.compose.runtime:runtime-livedata:1.8.2")
     
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

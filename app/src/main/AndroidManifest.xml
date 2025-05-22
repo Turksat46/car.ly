@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 
+
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -18,7 +20,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CarlyDashboard"
-        android:screenOrientation="portrait"
+        android:screenOrientation="sensorLandscape"
         android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
         tools:targetApi="31">
         <activity
@@ -32,6 +34,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <service android:name=".MyMediaSessionListenerService"
+                  android:label="MusicListener"
+                  android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+                  android:exported="true">
+             <intent-filter>
+                 <action android:name="android.service.notification.NotificationListenerService" />
+             </intent-filter>
+         </service>
     </application>
 
 </manifest>
