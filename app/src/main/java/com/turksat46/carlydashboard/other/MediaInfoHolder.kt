@@ -1,6 +1,7 @@
 package com.turksat46.carlydashboard.other
 
 import android.graphics.Bitmap
+import android.media.session.MediaSession
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 
@@ -52,5 +53,7 @@ data class TrackInfo(
     val artist: String?,
     val album: String?, // Kann nützlich sein, auch wenn nicht direkt angezeigt
     val albumArt: Bitmap?,
-    val packageName: String // Um die Quelle zu identifizieren
+    val packageName: String, // Um die Quelle zu identifizieren
+    val sessionToken: MediaSession.Token? = null // Added session token
+
 )

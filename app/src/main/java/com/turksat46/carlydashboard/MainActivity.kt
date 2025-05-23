@@ -9,24 +9,28 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.media.MediaPlayer
+import android.media.session.MediaController
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Looper
-import android.provider.Settings.Secure.getString
 import android.util.Log
 import android.view.OrientationEventListener
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresApi
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -40,9 +44,9 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -60,11 +64,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.ArrowBack // For MediaControls
-import androidx.compose.material.icons.filled.ArrowForward // For MediaControls
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -76,9 +76,11 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchColors
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -111,9 +113,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.ContextCompat.startActivity
+import androidx.core.graphics.toColor
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.palette.graphics.Palette
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.android.gms.location.FusedLocationProviderClient
@@ -124,8 +129,6 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.firebase.FirebaseApp
-import com.google.firebase.ktx.Firebase
-import com.google.firebase.ktx.app
 import com.google.firebase.ml.modeldownloader.CustomModel
 import com.google.firebase.ml.modeldownloader.CustomModelDownloadConditions
 import com.google.firebase.ml.modeldownloader.DownloadType
@@ -139,6 +142,9 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import androidx.core.graphics.createBitmap
+import com.turksat46.carlydashboard.other.NavigationInfo
+import com.turksat46.carlydashboard.other.NavigationInfoHolder
 
 
 class MainActivity : ComponentActivity(), Detector.DetectorListener {
@@ -168,11 +174,13 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
     private val infoPageActive = mutableStateOf(false) // Controls visibility of InfoScreenContent overlay
     private val showSettingsPanelState = mutableStateOf(false) // Controls visibility of SettingsPanel overlay
 
+    private val showSettingsButton = mutableStateOf(true)
 
     private val detectedSignResourceIdsState = mutableStateOf<List<Int>>(emptyList())
 
     private var lastAnalyzedBitmapWidth = mutableStateOf(1)
     private var lastAnalyzedBitmapHeight = mutableStateOf(1)
+
 
     @OptIn(ExperimentalPermissionsApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -243,7 +251,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                                 ) {
                                     InfoScreenContent(
                                         physicalOrientation = physicalOrientationState.value,
-                                        onClose = { infoPageActive.value = false }
+                                        onClose = { infoPageActive.value = false },
                                     )
                                 }
 
@@ -256,8 +264,18 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                                     erkannteSchilderResourceIds = detectedSignResourceIdsState.value,
                                     isDebuggingEnabled = isDebugModeState.value,
                                     physicalOrientation = physicalOrientationState.value,
+                                    showSettingsButton = showSettingsButton.value,
                                     onSettingsToggle = { showSettingsPanelState.value = !showSettingsPanelState.value },
-                                    onShowInfoScreenRequest = { infoPageActive.value = !infoPageActive.value },
+                                    onShowInfoScreenRequest = {
+                                        if ( infoPageActive.value){
+                                            showSettingsButton.value = true
+                                            infoPageActive.value = false
+                                        }
+                                        else{
+                                            showSettingsButton.value = false
+                                            infoPageActive.value = true
+                                        }
+                                    },
                                     isInfoScreenActive = infoPageActive.value
                                 )
 
@@ -732,10 +750,11 @@ fun CameraPreviewAndDetectionLayer(
 }
 
 
+@RequiresApi(Build.VERSION_CODES.O)
 @Composable
 fun InfoScreenContent(
     physicalOrientation: Int,
-    onClose: () -> Unit
+    onClose: () -> Unit,
 ) {
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
@@ -769,6 +788,10 @@ fun InfoScreenContent(
         (infoButtonSize + infoButtonPadding).coerceAtLeast(laneIndicatorHeight + laneIndicatorBottomPadding)
     }
 
+    // Observe NavigationInfo
+    val navigationInfoState by NavigationInfoHolder.currentNavigationInfo.observeAsState()
+    val navInfo = navigationInfoState // Das ist jetzt ein NavigationInfo? Objekt
+
 
     Box(
         modifier = Modifier
@@ -779,7 +802,6 @@ fun InfoScreenContent(
         Column(modifier = Modifier.fillMaxSize()) {
             // Top bar for an explicit close button for this panel, if desired,
             // even if the main toggle button also closes it.
-
 
             // Content Panels Area - Padded to avoid InfoAndControlsOverlay
             Box(
@@ -797,26 +819,16 @@ fun InfoScreenContent(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        InfoPanel(title = "Navigation (L)", modifier = Modifier.weight(1f)) {
-                            Text("Ziel: A9 München", color = Color.LightGray)
-                            Text("Ankunft: 15:00", color = Color.LightGray)
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = { /*TODO*/ }) { Text("Details") }
-                        }
-                        InfoPanelMedia()
+                        InfoPanelNavigation(navInfo = navInfo, modifier = Modifier.weight(1f))
+                        InfoPanelMedia(modifier = Modifier.weight(1f))
                     }
                 } else { // Portrait
                     Column(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        InfoPanel(title = "Navigation (P)", modifier = Modifier.weight(1f).fillMaxWidth()) {
-                            Text("Ziel: Berlin Alexanderplatz", color = Color.LightGray)
-                            Text("Ankunft: 12:30", color = Color.LightGray)
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = { /*TODO*/ }) { Text("Start") }
-                        }
-                        InfoPanelMedia()
+                        InfoPanelNavigation(navInfo = navInfo, modifier = Modifier.weight(1f).fillMaxWidth())
+                        InfoPanelMedia(modifier = Modifier.weight(1f).fillMaxWidth())
                     }
                 }
             }
@@ -828,7 +840,7 @@ fun InfoScreenContent(
 fun InfoPanel(title: String, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Card(
         modifier = modifier.fillMaxHeight(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.8f)), // Slightly more opaque
         elevation = CardDefaults.cardElevation(2.dp)
     ) {
@@ -850,111 +862,326 @@ fun InfoPanel(title: String, modifier: Modifier = Modifier, content: @Composable
     }
 }
 
+// Neue Composable für das Navigations-Panel
+@Composable
+fun InfoPanelNavigation(navInfo: NavigationInfo?, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxHeight(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.DarkGray.copy(alpha = 0.8f)),
+        elevation = CardDefaults.cardElevation(2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(16.dp) // Mehr Padding für besseres Aussehen
+                .fillMaxSize(),
+            horizontalAlignment = Alignment.Start, // Text linksbündig
+            verticalArrangement = Arrangement.SpaceBetween // Verteilt Inhalt
+        ) {
+            Column { // Für obere Nav-Infos
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        ImageVector.vectorResource(R.drawable.baseline_navigation_24), // Ein passendes Icon
+                        contentDescription = "Navigation",
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "Navigation",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+
+                if (navInfo?.isActive == true) {
+                    navInfo.nextInstruction?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.titleLarge, // Größer für die Hauptanweisung
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    navInfo.currentRoad?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.LightGray,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    navInfo.etaDetails?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = Color.Cyan.copy(alpha = 0.9f), // Akzentfarbe für ETA
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                } else {
+                    Text(
+                        "Keine aktive Navigation von Google Maps erkannt.",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.Gray,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
+                    )
+                }
+            }
+
+            // Platz für einen Button, falls gewünscht
+            if (navInfo?.isActive == true) {
+                Button(
+                    onClick = {
+                        /*
+                        //Versuche, Google Maps zu öffnen (falls es nicht schon im Vordergrund ist)
+                        val gmmIntentUri = Uri.parse("google.navigation:q=") // Leere Query öffnet Maps
+                        val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
+                        mapIntent.setPackage("com.google.android.apps.maps")
+                        try {
+                            startActivity(this, mapIntent, null)
+                        } catch (e: Exception) {
+                            Log.e("InfoPanelNavigation", "Konnte Google Maps nicht starten", e)
+                        }
+                        */
+
+                    },
+                    modifier = Modifier.fillMaxWidth().align(Alignment.CenterHorizontally)
+                ) {
+                    Text("Maps öffnen")
+                }
+            }
+        }
+    }
+}
+
+// InfoPanelMedia Composable
+@RequiresApi(Build.VERSION_CODES.O) // Already there
 @Composable
 fun InfoPanelMedia(modifier: Modifier = Modifier) {
-    val currentTrack by MediaInfoHolder.currentTrack.observeAsState()
+    val currentTrackState by MediaInfoHolder.currentTrack.observeAsState()
     val isPlaying by MediaInfoHolder.isPlaying.observeAsState(false)
-    val sourceApp by MediaInfoHolder.currentSourceApp.observeAsState()
+    val sourceApp by MediaInfoHolder.currentSourceApp.observeAsState() // No longer direct, get from trackInfo.packageName
 
     val context = LocalContext.current
+    val trackInfo = currentTrackState // Get the TrackInfo object
+    //val sourceApp = trackInfo?.packageName // Get source app from TrackInfo
 
-    // Starte den Service, falls noch nicht geschehen
+    var paletteState by remember { mutableStateOf<Palette?>(null) }
+    LaunchedEffect(trackInfo?.albumArt) {
+        if (trackInfo?.albumArt != null) {
+            paletteState = Palette.from(trackInfo.albumArt).generate()
+        } else {
+            paletteState = null // Clear palette if no art
+        }
+    }
+    val palette = paletteState
+
+    // Create MediaController from token if available
+    val mediaController = remember(trackInfo?.sessionToken, context) {
+        trackInfo?.sessionToken?.let { token ->
+            try {
+                MediaController(context, token)
+            } catch (e: Exception) {
+                Log.e("InfoPanelMedia", "Error creating MediaController from token", e)
+                null
+            }
+        }
+    }
+
+    // Start the service, if not already running (idempotent)
     LaunchedEffect(Unit) {
         try {
-            val serviceIntent = Intent(context, MyMediaSessionListenerService::class.java) // Stelle sicher, dass MyMediaSessionListenerService im selben Paket oder korrekt importiert ist
+            val serviceIntent = Intent(context, MyMediaSessionListenerService::class.java)
             context.startService(serviceIntent)
         } catch (e: Exception) {
             Log.e("InfoPanelMedia", "Error starting MyMediaSessionListenerService", e)
         }
     }
 
-    // MediaPermissionChecker umschließt den Inhalt, der die Berechtigung benötigt
-    MediaPermissionChecker { // Zeigt Berechtigungsaufforderung, falls nötig
+    MediaPermissionChecker {
+        val cardContainerColor = palette?.getDarkMutedColor(android.graphics.Color.TRANSPARENT)?.let {
+            if (it != android.graphics.Color.TRANSPARENT) Color(it).copy(alpha = 0.7f) else Color.Black.copy(alpha = 0.6f)
+        } ?: Color.Black.copy(alpha = 0.6f)
+
         Card(
             modifier = modifier.fillMaxHeight(),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = Color.Black.copy(alpha = 0.6f) // Fallback-Hintergrund
+                containerColor = cardContainerColor
             ),
             elevation = CardDefaults.cardElevation(4.dp)
         ) {
-            Box(modifier = Modifier.fillMaxWidth(0.5f)) { // Box für Hintergrundbild
-                // Album Art als Hintergrund mit Blur und Overlay
-                currentTrack?.albumArt?.let { art ->
+            Box(modifier = Modifier.fillMaxSize()) { // Changed from fillMaxWidth(0.5f)
+                trackInfo?.albumArt?.let { art ->
                     Image(
                         bitmap = art.asImageBitmap(),
                         contentDescription = "Album Art Background",
-                        contentScale = ContentScale.Crop, // Füllt den gesamten Bereich
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
-                            .blur(radius = 2.dp), // Stärkerer Blur für besseren Textkontrast
-                        alpha = 1f // Etwas transparent machen
+                            .blur(radius = 0.dp) // Slight blur for background
+                            .animateContentSize(),
+                        alpha = 0.9f // Slightly transparent
                     )
-                    // Dunkles Overlay für besseren Textkontrast über dem Bild
-                    Box(
+                    Box( // Darkening overlay for better text contrast
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.3f)) // Zusätzliches Overlay
+                            .background(Color.Black.copy(alpha = 0.3f))
                     )
                 }
 
-                // Vordergrund-Inhalt (Text, Controls)
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(12.dp) ,
+                        .padding(12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.SpaceBetween,
-
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) { // Für Titel und Künstler
-                        Spacer(Modifier.height(4.dp)) // Kleiner Abstand oben
+                    val dominantSwatch = palette?.vibrantSwatch
+                    val titleTextColor = dominantSwatch?.titleTextColor?.let { Color(it).copy(alpha = 1f) } ?: Color.White
+                    val bodyTextColor = dominantSwatch?.bodyTextColor?.let { Color(it).copy(alpha = 0.8f) } ?: Color.LightGray.copy(alpha = 0.9f)
+                    val labelTextColor = titleTextColor.copy(alpha = 0.7f)
+
+                    val textInfoBackgroundColor = palette?.getDarkVibrantColor(android.graphics.Color.TRANSPARENT)?.let {
+                        if (it != android.graphics.Color.TRANSPARENT) Color(it).copy(alpha = 0.3f)
+                        else Color.Black.copy(alpha = 0.9f)
+                    } ?: Color.Black.copy(alpha = 0.4f)
+
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .background(textInfoBackgroundColor.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            //.fillMaxWidth() // Allow text to take width
+                    ) {
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            text = currentTrack?.title ?: "Keine Wiedergabe",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
+                            text = trackInfo?.title ?: "Keine Wiedergabe",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = titleTextColor,
                             fontWeight = FontWeight.Bold,
-                            maxLines = 2, // Erlaube zwei Zeilen für längere Titel
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
                         )
-                        if (currentTrack?.artist != null) {
+                        if (trackInfo?.artist != null) {
                             Text(
-                                text = currentTrack?.artist!!,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.LightGray,
+                                text = trackInfo.artist,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = bodyTextColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
                             )
                         }
-                        if (sourceApp != null && currentTrack != null) {
+                        if (sourceApp != null && trackInfo?.title != null) { // Show source only if there's a track
                             Text(
-                                text = "via $sourceApp",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(top = 4.dp)
+                                text = "via $sourceApp", // You might want to map package name to app name
+                                style = MaterialTheme.typography.labelMedium,
+                                color = labelTextColor,
+                                textAlign = TextAlign.Center,
                             )
                         }
                     }
 
-                    // Media Controls (Platzhalter für später)
-                    if (currentTrack != null) { // Zeige Controls nur, wenn ein Track da ist
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 8.dp)) {
-                            Text(
-                                text = if (isPlaying) "SPIELT" else "PAUSIERT",
-                                color = if (isPlaying) Color(0xFF4CAF50) else Color(0xFFFFC107), // Grün für spielend, Gelb für pausiert
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
+                    if (trackInfo != null) {
+                        val transportControls = remember(mediaController) { mediaController?.transportControls }
+                        val canControl = transportControls != null
+
+                        val controlBgColor = palette?.getDarkVibrantColor(android.graphics.Color.TRANSPARENT)?.let { colorInt ->
+                            if (colorInt != android.graphics.Color.TRANSPARENT) Color(colorInt).copy(alpha = 0.7f)
+                            else Color.Black.copy(alpha = 0.55f)
+                        } ?: Color.Black.copy(alpha = 0.55f)
+
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 8.dp)){
+                            MediaControls(
+                                isPlaying = isPlaying,
+                                backgroundColor = controlBgColor,
+                                onPlay = { transportControls?.play() },
+                                onPause = { transportControls?.pause() },
+                                onSkipNext = { transportControls?.skipToNext() },
+                                onSkipPrevious = { transportControls?.skipToPrevious() },
+                                canControl = canControl
                             )
                             Spacer(Modifier.height(8.dp))
                         }
+
+
                     } else {
-                        // Platzhalter, wenn nichts spielt, aber Berechtigung da ist
-                        Text("Öffne eine Medien-App", color = Color.Gray, textAlign = TextAlign.Center)
+                        Text(
+                            "Öffne eine Medien-App auf deinem Handy.",
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(16.dp)
+                        )
                     }
                 }
             }
+        }
+    }
+}
+// MediaControls Composable - Modified to accept lambdas and control flag
+@Composable
+fun MediaControls(
+    isPlaying: Boolean,
+    backgroundColor: Color,
+    onPlay: () -> Unit,
+    onPause: () -> Unit,
+    onSkipNext: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    canControl: Boolean,
+
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(backgroundColor, RoundedCornerShape(28.dp)), // More rounded
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val iconTintColor = if (canControl) Color.White else Color.Gray.copy(alpha = 0.7f)
+        IconButton(onClick = onSkipPrevious, enabled = canControl) {
+            Icon(
+                ImageVector.vectorResource(R.drawable.baseline_skip_previous_24),
+                "Vorheriger",
+                tint = iconTintColor,
+                modifier = Modifier.size(30.dp) // Slightly smaller
+            )
+        }
+        IconButton(
+            onClick = if (isPlaying) onPause else onPlay,
+            enabled = canControl,
+            modifier = Modifier
+                .size(52.dp) // Larger central button
+                .background(
+                    if (canControl) Color.White.copy(alpha = 0.1f) else Color.Transparent,
+                    CircleShape
+                )
+        ) {
+            Icon(
+                imageVector = if (isPlaying) ImageVector.vectorResource(R.drawable.baseline_pause_24) else Icons.Default.PlayArrow,
+                contentDescription = if (isPlaying) "Pause" else "Play",
+                tint = iconTintColor,
+                modifier = Modifier.size(if (isPlaying) 30.dp else 36.dp) // Pause icon can be smaller
+            )
+        }
+        IconButton(onClick = onSkipNext, enabled = canControl) {
+            Icon(
+                ImageVector.vectorResource(R.drawable.baseline_skip_next_24),
+                "Nächster",
+                tint = iconTintColor,
+                modifier = Modifier.size(30.dp) // Slightly smaller
+            )
         }
     }
 }
@@ -1027,7 +1254,7 @@ fun MediaPermissionChecker(onPermissionGranted: @Composable () -> Unit) {
             Text("Medienwiedergabe-Informationen", style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
             Text(
-                "Um Informationen über die aktuelle Medienwiedergabe (z.B. von Spotify) anzuzeigen, " +
+                "Um Informationen über die aktuelle Medienwiedergabe (z.B. von Spotify) oder der Navigation anzuzeigen, " +
                         "benötigt CarlyDashboard Zugriff auf deine Benachrichtigungen. " +
                         "Bitte aktiviere den Zugriff in den Systemeinstellungen.",
                 textAlign = TextAlign.Center
@@ -1036,25 +1263,6 @@ fun MediaPermissionChecker(onPermissionGranted: @Composable () -> Unit) {
             Button(onClick = { requestNotificationListenerPermission(context) }) {
                 Text("Zu den Einstellungen")
             }
-        }
-    }
-}
-
-@Composable
-fun MediaControls() {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = { /* TODO */ }) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Vorheriger", tint = Color.White, modifier = Modifier.size(32.dp)) // Material Icon
-        }
-        IconButton(onClick = { /* TODO */ }) {
-            Icon(Icons.Filled.PlayArrow, "Play/Pause", tint = Color.White, modifier = Modifier.size(44.dp))
-        }
-        IconButton(onClick = { /* TODO */ }) {
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, "Nächster", tint = Color.White, modifier = Modifier.size(32.dp)) // Material Icon
         }
     }
 }
@@ -1161,7 +1369,8 @@ fun InfoAndControlsOverlay(
     physicalOrientation: Int,
     onSettingsToggle: () -> Unit,
     onShowInfoScreenRequest: () -> Unit,
-    isInfoScreenActive: Boolean
+    isInfoScreenActive: Boolean,
+    showSettingsButton: Boolean
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         if (isDebuggingEnabled && inferenceTime > 0) {
@@ -1214,24 +1423,28 @@ fun InfoAndControlsOverlay(
             SignBubblePlaceholder(resourceIds = erkannteSchilderResourceIds,
                 modifier = Modifier.height(if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 60.dp else 70.dp))
         }
-
-        IconButton(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 16.dp, end = 16.dp)
-                .size(60.dp),
-            onClick = onSettingsToggle
-        ) {
-            Icon(
-                Icons.Filled.Settings,
-                contentDescription = "Einstellungen",
-                tint = Color.White,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.6f), CircleShape)
-                    .padding(12.dp)
-            )
+        when {
+            showSettingsButton -> {
+                IconButton(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 16.dp, end = 16.dp)
+                        .size(60.dp),
+                    onClick = onSettingsToggle
+                ) {
+                    Icon(
+                        Icons.Filled.Settings,
+                        contentDescription = "Einstellungen",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                            .padding(12.dp)
+                    )
+                }
+            }
         }
+
 
         val infoIcon = if (isInfoScreenActive) Icons.Filled.Close else Icons.AutoMirrored.Filled.List
         IconButton(
@@ -1365,71 +1578,6 @@ fun SignBubblePreviewTriple() {
 @Composable
 fun SignBubblePreviewEmpty() {
     SignBubblePlaceholder(resourceIds = listOf())
-}
-
-@androidx.compose.ui.tooling.preview.Preview(showBackground = true, device = "spec:width=1280dp,height=800dp,dpi=240,orientation=landscape")
-@Composable
-fun FullAppPreviewLandscape() { // Renamed preview
-    CarlyDashboardTheme {
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Dummy Camera Layer
-            Box(Modifier.fillMaxSize().background(Color.DarkGray)) {
-                Text("Camera Preview Area", Modifier.align(Alignment.Center), color = Color.White)
-            }
-
-            // InfoScreenContent (conditionally visible)
-            var showInfo by remember { mutableStateOf(true) } // Default to show for preview
-            AnimatedVisibility(visible = showInfo) {
-                InfoScreenContent(
-                    physicalOrientation = Configuration.ORIENTATION_LANDSCAPE,
-                    onClose = { showInfo = false }
-                )
-            }
-
-            // InfoAndControlsOverlay
-            InfoAndControlsOverlay(
-                inferenceTime = 12,
-                speed = 120 / 3.6f,
-                laneDeviation = 0.12,
-                erkannteSchilderResourceIds = listOf(R.drawable.speed_120, R.drawable.stop),
-                isDebuggingEnabled = true,
-                physicalOrientation = Configuration.ORIENTATION_LANDSCAPE,
-                onSettingsToggle = { },
-                onShowInfoScreenRequest = { showInfo = !showInfo },
-                isInfoScreenActive = showInfo
-            )
-        }
-    }
-}
-
-@androidx.compose.ui.tooling.preview.Preview(showBackground = true, device = "spec:width=800dp,height=1280dp,dpi=240,orientation=portrait")
-@Composable
-fun FullAppPreviewPortrait() { // Renamed preview
-    CarlyDashboardTheme {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().background(Color.DarkGray)) {
-                Text("Camera Preview Area", Modifier.align(Alignment.Center), color = Color.White)
-            }
-            var showInfo by remember { mutableStateOf(true) }
-            AnimatedVisibility(visible = showInfo) {
-                InfoScreenContent(
-                    physicalOrientation = Configuration.ORIENTATION_PORTRAIT,
-                    onClose = { showInfo = false }
-                )
-            }
-            InfoAndControlsOverlay(
-                inferenceTime = 25,
-                speed = 55 / 3.6f,
-                laneDeviation = -0.08,
-                erkannteSchilderResourceIds = listOf(R.drawable.speed_50),
-                isDebuggingEnabled = false,
-                physicalOrientation = Configuration.ORIENTATION_PORTRAIT,
-                onSettingsToggle = { },
-                onShowInfoScreenRequest = { showInfo = !showInfo },
-                isInfoScreenActive = showInfo
-            )
-        }
-    }
 }
 
 

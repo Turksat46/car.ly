@@ -149,8 +149,11 @@ class Detector(
         val imageBuffer = processedImage.buffer
 
         val output = TensorBuffer.createFixedSize(intArrayOf(1, numChannel, numElements), OUTPUT_IMAGE_TYPE)
-
-        interpreter.run(imageBuffer, output.buffer)
+        try {
+            interpreter.run(imageBuffer, output.buffer)
+        }catch(e: Exception){
+            e.printStackTrace()
+        }
 
         val bestBoxes = bestBox(output.floatArray)
         inferenceTime = SystemClock.uptimeMillis() - inferenceTime
