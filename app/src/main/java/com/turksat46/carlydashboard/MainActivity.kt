@@ -8,12 +8,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.hardware.camera2.CameraCharacteristics
 import android.media.MediaPlayer
 import android.media.session.MediaController
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.OrientationEventListener
 import android.view.ViewGroup
@@ -24,10 +26,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.annotation.RequiresApi
+import androidx.camera.camera2.internal.Camera2CameraInfoImpl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.impl.CameraFilters
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.Recorder
+import androidx.camera.video.VideoCapture
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -66,6 +74,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
@@ -105,6 +114,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -143,9 +153,18 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.core.graphics.createBitmap
+import com.turksat46.carlydashboard.dashcam.DashcamRecorder
 import com.turksat46.carlydashboard.other.NavigationInfo
 import com.turksat46.carlydashboard.other.NavigationInfoHolder
 
+
+
+// Define this enum, preferably outside the MainActivity class or in a separate file
+enum class InfoScreenLayoutMode {
+    DEFAULT,
+    MEDIA_MAXIMIZED,
+    NAV_MAXIMIZED
+}
 
 class MainActivity : ComponentActivity(), Detector.DetectorListener {
 
@@ -158,11 +177,15 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
     private lateinit var laneSoftPlayer: MediaPlayer
     private lateinit var laneHardPlayer: MediaPlayer
 
+    private lateinit var dashcamRecorder: DashcamRecorder
+    private var videoCaptureUseCase: VideoCapture<Recorder>? = null // Halte eine Referenz
+
     // --- UI States ---
     private val boundingBoxesState = mutableStateOf<List<BoundingBox>>(emptyList())
     private val laneBitmapState = mutableStateOf<Bitmap?>(null)
     private val laneDeviationState = mutableStateOf<Double?>(null)
     private val inferenceTimeState = mutableStateOf(0L)
+    private val isEnergySavingEnabled = mutableStateOf(true)
     private val isGpuEnabledState = mutableStateOf(true)
     private val isLaneDetectionEnabledState = mutableStateOf(true)
     private val isDetectorInitialized = mutableStateOf(false)
@@ -194,7 +217,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         createLocationCallback()
         createOrientationListener()
         initializeMediaPlayers()
-
+        dashcamRecorder = DashcamRecorder(this, cameraExecutor)
 
         if (!OpenCVLoader.initDebug()) {
             Log.e("OpenCV", "Internal OpenCV library not found.")
@@ -246,7 +269,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                                 // This is drawn on top of camera, below main controls
                                 AnimatedVisibility(
                                     visible = infoPageActive.value,
-                                    enter = fadeIn(animationSpec = tween(300)),
+                                    enter = fadeIn(animationSpec = tween(600)),
                                     exit = fadeOut(animationSpec = tween(300))
                                 ) {
                                     InfoScreenContent(
@@ -299,13 +322,15 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
                                     exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut()
                                 ) {
                                     SettingsPanel(
+                                        isEnergySavingEnabled = isEnergySavingEnabled.value,
                                         isGpuEnabled = isGpuEnabledState.value,
                                         isLaneDetectionEnabled = isLaneDetectionEnabledState.value,
                                         isDebuggingEnabled = isDebugModeState.value,
                                         onGpuToggle = ::toggleGpu,
                                         onLaneDetectionToggle = ::toggleLaneDetection,
                                         onDebugViewToggle = ::toggleDebugView,
-                                        onDismissRequest = { showSettingsPanelState.value = false }
+                                        onDismissRequest = { showSettingsPanelState.value = false },
+                                        onEnergySavingToggle = {isEnergySavingEnabled.value = !isEnergySavingEnabled.value},
                                     )
                                 }
                             }
@@ -507,6 +532,8 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         }
     }
 
+
+
     private fun toggleLaneDetection(enabled: Boolean) {
         isLaneDetectionEnabledState.value = enabled
         if (!enabled) {
@@ -527,7 +554,7 @@ class MainActivity : ComponentActivity(), Detector.DetectorListener {
         lastAnalyzedBitmapWidth.value = bitmap.width
         lastAnalyzedBitmapHeight.value = bitmap.height
 
-        if (::detector.isInitialized && !cameraExecutor.isShutdown) {
+        if (::detector.isInitialized && !cameraExecutor.isShutdown && !isEnergySavingEnabled.value) {
             detector.detect(bitmap)
 
             if (isLaneDetectionEnabledState.value) {
@@ -660,7 +687,9 @@ fun LoadingIndicator(text: String) {
 
 @Composable
 fun warningView(){
-    Box(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .padding(horizontal = 20.dp),
         contentAlignment = Alignment.Center){
         Column (horizontalAlignment = Alignment.CenterHorizontally){
             Icon(Icons.Filled.Warning, "Warnung", Modifier.size(48.dp))
@@ -744,7 +773,9 @@ fun CameraPreviewAndDetectionLayer(
             val gradient = Brush.horizontalGradient(
                 colors = listOf(baseColor.copy(alpha = animatedAlpha), Color.Transparent, baseColor.copy(alpha = animatedAlpha))
             )
-            Box(modifier = Modifier.fillMaxSize().background(gradient))
+            Box(modifier = Modifier
+                .fillMaxSize()
+                .background(gradient))
         }
     }
 }
@@ -808,7 +839,7 @@ fun InfoScreenContent(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(
-                        top = 40.dp, // Add a small buffer
+                        top = 30.dp, // Add a small buffer
                         bottom = 40.dp,
                         start = 100.dp,
                         end = 16.dp
@@ -819,16 +850,23 @@ fun InfoScreenContent(
                         modifier = Modifier.fillMaxSize(),
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        InfoPanelNavigation(navInfo = navInfo, modifier = Modifier.weight(1f))
-                        InfoPanelMedia(modifier = Modifier.weight(1f))
+                        InfoPanelMedia(modifier = Modifier.weight(1.3f))
+                        Column(modifier = Modifier.weight(0.7f).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp) ) {
+                            InfoPanel("Benachrichtigung", modifier = Modifier.weight(0.8f)) { Text("Simple Benachrichtigung") }
+                            InfoPanelNavigation(navInfo = navInfo, modifier = Modifier.weight(1.2f))
+                        }
                     }
                 } else { // Portrait
                     Column(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        InfoPanelNavigation(navInfo = navInfo, modifier = Modifier.weight(1f).fillMaxWidth())
-                        InfoPanelMedia(modifier = Modifier.weight(1f).fillMaxWidth())
+                        InfoPanelNavigation(navInfo = navInfo, modifier = Modifier
+                            .weight(0.7f)
+                            .fillMaxWidth())
+                        InfoPanelMedia(modifier = Modifier
+                            .weight(1.3f)
+                            .fillMaxWidth())
                     }
                 }
             }
@@ -846,11 +884,28 @@ fun InfoPanel(title: String, modifier: Modifier = Modifier, content: @Composable
     ) {
         Column(
             modifier = Modifier
-                .padding(12.dp)
+                .padding(16.dp)
                 .fillMaxSize(),
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalAlignment = Alignment.Start, // Text linksbündig
+            verticalArrangement = Arrangement.SpaceBetween // Verteilt Inhalt
         ) {
-
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Notifications, // Ein passendes Icon
+                    contentDescription = "Benachrichtigung",
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = Color.White,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(Modifier.height(12.dp))
             Column(
                 modifier = Modifier.weight(1f),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -932,7 +987,9 @@ fun InfoPanelNavigation(navInfo: NavigationInfo?, modifier: Modifier = Modifier)
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.Gray,
                         textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 20.dp)
                     )
                 }
             }
@@ -941,20 +998,24 @@ fun InfoPanelNavigation(navInfo: NavigationInfo?, modifier: Modifier = Modifier)
             if (navInfo?.isActive == true) {
                 Button(
                     onClick = {
-                        /*
+                       /*
                         //Versuche, Google Maps zu öffnen (falls es nicht schon im Vordergrund ist)
                         val gmmIntentUri = Uri.parse("google.navigation:q=") // Leere Query öffnet Maps
                         val mapIntent = Intent(Intent.ACTION_VIEW, gmmIntentUri)
                         mapIntent.setPackage("com.google.android.apps.maps")
                         try {
-                            startActivity(this, mapIntent, null)
+                            startActivity(LocalContext.current, mapIntent, null)
                         } catch (e: Exception) {
                             Log.e("InfoPanelNavigation", "Konnte Google Maps nicht starten", e)
                         }
+
                         */
 
+
                     },
-                    modifier = Modifier.fillMaxWidth().align(Alignment.CenterHorizontally)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.CenterHorizontally)
                 ) {
                     Text("Maps öffnen")
                 }
@@ -1047,7 +1108,8 @@ fun InfoPanelMedia(modifier: Modifier = Modifier) {
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
                     val dominantSwatch = palette?.vibrantSwatch
-                    val titleTextColor = dominantSwatch?.titleTextColor?.let { Color(it).copy(alpha = 1f) } ?: Color.White
+                    //val titleTextColor = dominantSwatch?.titleTextColor?.let { Color(it).copy(alpha = 1f) } ?: Color.White
+                    val titleTextColor = Color.White
                     val bodyTextColor = dominantSwatch?.bodyTextColor?.let { Color(it).copy(alpha = 0.8f) } ?: Color.LightGray.copy(alpha = 0.9f)
                     val labelTextColor = titleTextColor.copy(alpha = 0.7f)
 
@@ -1056,15 +1118,18 @@ fun InfoPanelMedia(modifier: Modifier = Modifier) {
                         else Color.Black.copy(alpha = 0.9f)
                     } ?: Color.Black.copy(alpha = 0.4f)
 
-
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
-                            .background(textInfoBackgroundColor.copy(alpha = 0.8f), RoundedCornerShape(12.dp))
+                            .background(
+                                textInfoBackgroundColor.copy(alpha = 0.8f),
+                                RoundedCornerShape(12.dp)
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                             //.fillMaxWidth() // Allow text to take width
                     ) {
                         Spacer(Modifier.height(4.dp))
+
                         Text(
                             text = trackInfo?.title ?: "Keine Wiedergabe",
                             style = MaterialTheme.typography.titleLarge,
@@ -1093,6 +1158,8 @@ fun InfoPanelMedia(modifier: Modifier = Modifier) {
                             )
                         }
                     }
+
+
 
                     if (trackInfo != null) {
                         val transportControls = remember(mediaController) { mediaController?.transportControls }
@@ -1189,19 +1256,19 @@ fun MediaControls(
 // In deiner Activity oder einem Composable
 fun requestNotificationListenerPermission(context: Context) {
     val cn = ComponentName(context, MyMediaSessionListenerService::class.java)
-    val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+    val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
     val enabled = flat != null && flat.contains(cn.flattenToString())
 
     if (!enabled) {
-        Toast.makeText(context, "Bitte Zugriff auf Benachrichtigungen für CarlyDashboard aktivieren.", Toast.LENGTH_LONG).show()
-        val intent = Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        Toast.makeText(context, "Bitte Zugriff auf Benachrichtigungen für open::Dashboard aktivieren.", Toast.LENGTH_LONG).show()
+        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         // Prüfen, ob der Intent aufgelöst werden kann, bevor er gestartet wird
         if (intent.resolveActivity(context.packageManager) != null) {
             context.startActivity(intent)
         } else {
             Toast.makeText(context, "Systemeinstellung nicht gefunden.", Toast.LENGTH_SHORT).show()
             // Fallback: Generelle App-Info-Seite
-            val fallbackIntent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             val uri = Uri.fromParts("package", context.packageName, null)
             fallbackIntent.data = uri
             if (fallbackIntent.resolveActivity(context.packageManager) != null) {
@@ -1220,7 +1287,7 @@ fun MediaPermissionChecker(onPermissionGranted: @Composable () -> Unit) {
     // Funktion, um den Berechtigungsstatus zu prüfen
     fun checkPermission(): Boolean {
         val cn = ComponentName(context, MyMediaSessionListenerService::class.java)
-        val flat = android.provider.Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+        val flat = Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
         return flat != null && flat.contains(cn.flattenToString())
     }
 
@@ -1247,7 +1314,9 @@ fun MediaPermissionChecker(onPermissionGranted: @Composable () -> Unit) {
         onPermissionGranted()
     } else {
         Column(
-            modifier = Modifier.fillMaxSize().padding(16.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -1255,7 +1324,7 @@ fun MediaPermissionChecker(onPermissionGranted: @Composable () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Text(
                 "Um Informationen über die aktuelle Medienwiedergabe (z.B. von Spotify) oder der Navigation anzuzeigen, " +
-                        "benötigt CarlyDashboard Zugriff auf deine Benachrichtigungen. " +
+                        "benötigt open::Dashboard Zugriff auf deine Benachrichtigungen. " +
                         "Bitte aktiviere den Zugriff in den Systemeinstellungen.",
                 textAlign = TextAlign.Center
             )
@@ -1270,9 +1339,11 @@ fun MediaPermissionChecker(onPermissionGranted: @Composable () -> Unit) {
 
 @Composable
 fun SettingsPanel(
+    isEnergySavingEnabled: Boolean,
     isGpuEnabled: Boolean,
     isLaneDetectionEnabled: Boolean,
     isDebuggingEnabled: Boolean,
+    onEnergySavingToggle: (Boolean) -> Unit,
     onGpuToggle: (Boolean) -> Unit,
     onLaneDetectionToggle: (Boolean) -> Unit,
     onDebugViewToggle: (Boolean) -> Unit,
@@ -1290,7 +1361,9 @@ fun SettingsPanel(
                 .fillMaxHeight()
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ){
@@ -1309,6 +1382,7 @@ fun SettingsPanel(
             Spacer(modifier = Modifier.height(12.dp))
 
             Column (verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingsToggleRow("Energiesparmodus", isEnergySavingEnabled, onEnergySavingToggle)
                 SettingsToggleRow("GPU Beschleunigung", isGpuEnabled, onGpuToggle)
                 SettingsToggleRow("Spurerkennung", isLaneDetectionEnabled, onLaneDetectionToggle)
                 SettingsToggleRow("Debugging Ansicht", isDebuggingEnabled, onDebugViewToggle)
@@ -1327,7 +1401,9 @@ fun SettingsPanel(
                 color = Color.LightGray,
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
             )
         }
     }
@@ -1337,7 +1413,9 @@ fun SettingsPanel(
 fun SettingsToggleRow(label: String, isChecked: Boolean, onToggle: (Boolean) -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
     ) {
         Text(
             label,
@@ -1381,7 +1459,11 @@ fun InfoAndControlsOverlay(
                 text = "$inferenceTime ms",
                 modifier = Modifier
                     .align(inferenceAlignment)
-                    .padding(start = 16.dp, top = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 0.dp else 16.dp, bottom = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 16.dp else 0.dp)
+                    .padding(
+                        start = 16.dp,
+                        top = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 0.dp else 16.dp,
+                        bottom = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 16.dp else 0.dp
+                    )
                     .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 color = Color.White,
@@ -1389,7 +1471,7 @@ fun InfoAndControlsOverlay(
             )
         }
 
-        val speedSignsAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE)
+        val speedSignsAlignment = if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE || isInfoScreenActive)
             Alignment.TopStart else Alignment.TopCenter
         val speedSignsPadding = Modifier.padding(start = 20.dp, top = 20.dp, end = 20.dp) // Added end padding for TopCenter
 
@@ -1402,7 +1484,6 @@ fun InfoAndControlsOverlay(
         ) {
             Card(
                 shape = RoundedCornerShape(16.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f))
             ) {
                 Column(
@@ -1423,11 +1504,11 @@ fun InfoAndControlsOverlay(
             SignBubblePlaceholder(resourceIds = erkannteSchilderResourceIds,
                 modifier = Modifier.height(if (physicalOrientation == Configuration.ORIENTATION_LANDSCAPE) 60.dp else 70.dp))
         }
-        when {
-            showSettingsButton -> {
+
+        AnimatedVisibility(showSettingsButton, enter = fadeIn(tween(300)), exit = fadeOut(tween(300)), modifier = Modifier.align(Alignment.TopEnd)) {
+            Column(modifier = Modifier.align(Alignment.TopEnd)){
                 IconButton(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
                         .padding(top = 16.dp, end = 16.dp)
                         .size(60.dp),
                     onClick = onSettingsToggle
@@ -1435,6 +1516,22 @@ fun InfoAndControlsOverlay(
                     Icon(
                         Icons.Filled.Settings,
                         contentDescription = "Einstellungen",
+                        tint = Color.White,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                            .padding(12.dp)
+                    )
+                }
+                IconButton(
+                    modifier = Modifier
+                        .padding(top = 16.dp, end = 16.dp)
+                        .size(60.dp),
+                    onClick = onSettingsToggle
+                ) {
+                    Icon(
+                        ImageVector.vectorResource(R.drawable.outline_screen_record_24),
+                        contentDescription = "Dashcam starten",
                         tint = Color.White,
                         modifier = Modifier
                             .fillMaxSize()
@@ -1454,6 +1551,7 @@ fun InfoAndControlsOverlay(
                 .padding(16.dp)
                 .size(64.dp)
                 .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+
         ) {
             Icon(
                 imageVector = infoIcon,
@@ -1516,7 +1614,10 @@ fun SignBubblePlaceholder(
             modifier = modifier
                 .height(actualHeight) // Apply the determined/default height
                 .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(actualHeight / 2))
-                .padding(horizontal = paddingHorizontal, vertical = (actualHeight - (iconSize * 0.8f)) / 2),
+                .padding(
+                    horizontal = paddingHorizontal,
+                    vertical = (actualHeight - (iconSize * 0.8f)) / 2
+                ),
             contentAlignment = Alignment.Center
         ){
             Icon(
@@ -1590,7 +1691,10 @@ fun LaneCenterIndicator(
         Divider(
             color = Color.White.copy(alpha = 0.4f),
             thickness = 1.dp,
-            modifier = Modifier.fillMaxHeight().width(1.dp).align(Alignment.Center)
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(1.dp)
+                .align(Alignment.Center)
         )
         val horizontalBias = deviation.coerceIn(-1.0, 1.0).toFloat()
         Box(
@@ -1603,6 +1707,7 @@ fun LaneCenterIndicator(
     }
 }
 
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
 private fun bindCameraUseCases(
     context: Context,
     cameraProvider: ProcessCameraProvider,
@@ -1611,6 +1716,7 @@ private fun bindCameraUseCases(
     onBitmapAnalyzed: (Bitmap) -> Unit,
     executor: ExecutorService
 ) {
+
     val cameraSelector = CameraSelector.Builder()
         .requireLensFacing(CameraSelector.LENS_FACING_BACK)
         .build()
@@ -1629,6 +1735,7 @@ private fun bindCameraUseCases(
         if (bitmap != null) {
             onBitmapAnalyzed(bitmap)
         }
+        imageProxy.close()
     }
 
     try {

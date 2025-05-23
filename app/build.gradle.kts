@@ -13,8 +13,8 @@ android {
         applicationId = "com.turksat46.carlydashboard"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.5.0-alpha"
+        versionCode = 3
+        versionName = "0.6.0-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -80,6 +80,8 @@ dependencies {
     implementation ("androidx.compose.runtime:runtime-livedata:1.8.2")
 
     implementation("androidx.palette:palette:1.0.0")
+
+    implementation ("androidx.camera:camera-extensions:1.4.2")
     
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
